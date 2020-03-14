@@ -13,8 +13,11 @@ Notable features
 * [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll with F1/F7)
 
 Compiling requires [ACME](https://sourceforge.net/projects/acme-crossass/)for use with Microsoft Visual Code
-also requires [Esshahn/acme-assembly-vscode-template](https://github.com/Esshahn/acme-assembly-vscode-template)
-some manual editing of the development system is required.  Sorry! See build.sh for use within Visual Code or build.bat for building outside of Visual Code.
+
+Also requires [Esshahn/acme-assembly-vscode-template](https://github.com/Esshahn/acme-assembly-vscode-template)
+
+And some manual editing of the development system is required.  Sorry! See build.sh for use within Visual Code or build.bat for building outside of Visual Code.
+
 Additional work will be required for non-Windows platforms.
 
 The introduction to this software is documented on my blog
