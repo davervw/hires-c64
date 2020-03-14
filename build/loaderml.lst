@@ -1,0 +1,89 @@
+(C:$e5cd) load "c:/Users/Dave/SkyDrive/C64/hires/build/loaderml.prg" 00
+Loading c:/Users/Dave/SkyDrive/C64/hires/build/loaderml.prg from 0863
+to 0906 (a3 bytes)
+(C:$e5cd) d 0863 0905
+.C:0863  A9 48       LDA #$48
+.C:0865  8D 00 01    STA $0100
+.C:0868  A9 BA       LDA #$BA
+.C:086a  8D 01 01    STA $0101
+.C:086d  A9 BC       LDA #$BC
+.C:086f  8D 02 01    STA $0102
+.C:0872  A9 02       LDA #$02
+.C:0874  8D 03 01    STA $0103
+.C:0877  A9 01       LDA #$01
+.C:0879  8D 04 01    STA $0104
+.C:087c  A9 BD       LDA #$BD
+.C:087e  8D 05 01    STA $0105
+.C:0881  A9 03       LDA #$03
+.C:0883  8D 06 01    STA $0106
+.C:0886  A9 01       LDA #$01
+.C:0888  8D 07 01    STA $0107
+.C:088b  A9 AA       LDA #$AA
+.C:088d  8D 08 01    STA $0108
+.C:0890  A9 68       LDA #$68
+.C:0892  8D 09 01    STA $0109
+.C:0895  A9 60       LDA #$60
+.C:0897  8D 0A 01    STA $010A
+.C:089a  20 00 01    JSR $0100
+.C:089d  EA          NOP
+.C:089e  EA          NOP
+.C:089f  EA          NOP
+.C:08a0  EA          NOP
+.C:08a1  EA          NOP
+.C:08a2  EA          NOP
+.C:08a3  EA          NOP
+.C:08a4  78          SEI
+.C:08a5  A5 01       LDA $01
+.C:08a7  29 F8       AND #$F8
+.C:08a9  85 01       STA $01
+.C:08ab  18          CLC
+.C:08ac  98          TYA
+.C:08ad  69 6A       ADC #$6A
+.C:08af  85 FB       STA $FB
+.C:08b1  8A          TXA
+.C:08b2  69 00       ADC #$00
+.C:08b4  85 FC       STA $FC
+.C:08b6  A0 00       LDY #$00
+.C:08b8  B1 FB       LDA ($FB),Y
+.C:08ba  85 FD       STA $FD
+.C:08bc  C8          INY
+.C:08bd  B1 FB       LDA ($FB),Y
+.C:08bf  AA          TAX
+.C:08c0  A5 FD       LDA $FD
+.C:08c2  F0 01       BEQ $08C5
+.C:08c4  E8          INX
+.C:08c5  C8          INY
+.C:08c6  B1 FB       LDA ($FB),Y
+.C:08c8  85 FE       STA $FE
+.C:08ca  C8          INY
+.C:08cb  B1 FB       LDA ($FB),Y
+.C:08cd  85 FF       STA $FF
+.C:08cf  18          CLC
+.C:08d0  A5 FB       LDA $FB
+.C:08d2  69 04       ADC #$04
+.C:08d4  85 FB       STA $FB
+.C:08d6  A5 FC       LDA $FC
+.C:08d8  69 00       ADC #$00
+.C:08da  85 FC       STA $FC
+.C:08dc  A0 00       LDY #$00
+.C:08de  B1 FB       LDA ($FB),Y
+.C:08e0  91 FE       STA ($FE),Y
+.C:08e2  A5 FD       LDA $FD
+.C:08e4  F0 0B       BEQ $08F1
+.C:08e6  E0 01       CPX #$01
+.C:08e8  D0 07       BNE $08F1
+.C:08ea  C8          INY
+.C:08eb  C4 FD       CPY $FD
+.C:08ed  F0 0C       BEQ $08FB
+.C:08ef  D0 ED       BNE $08DE
+.C:08f1  C8          INY
+.C:08f2  D0 EA       BNE $08DE
+.C:08f4  E6 FC       INC $FC
+.C:08f6  E6 FF       INC $FF
+.C:08f8  CA          DEX
+.C:08f9  D0 E3       BNE $08DE
+.C:08fb  A5 01       LDA $01
+.C:08fd  09 07       ORA #$07
+.C:08ff  85 01       STA $01
+.C:0901  A9 00       LDA #$00
+.C:0903  4C 00 C0    JMP $C000

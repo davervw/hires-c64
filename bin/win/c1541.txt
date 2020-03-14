@@ -1,0 +1,4 @@
+attach build/hires.d64
+delete "hires ml"
+delete "loadhires"
+write build/loadhires.prg loadhires
