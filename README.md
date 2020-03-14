@@ -26,6 +26,6 @@ Sorry! See build.sh for use within Visual Code or build.bat for building outside
 Additional work will be required for non-Windows platforms.
 
 The introduction to this software is documented on my blog
-[http://hires.davevw.com/](http://hires.davevw.com/)
+[https://blog.davevw.com/](https://blog.davevw.com/2020/03/new-hi-res-graphics-for-commodore-64.html)
 
 [C64 disk image](https://github.com/davervw/hires-c64/raw/master/build/hires.d64)
