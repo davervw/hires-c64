@@ -12,11 +12,15 @@ Notable features
 * Machine language interface included if BASIC isn't your thing
 * [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll with F1/F7)
 
-Compiling requires [ACME](https://sourceforge.net/projects/acme-crossass/) for use with Microsoft Visual Code.
+Compiling requires [ACME](https://sourceforge.net/projects/acme-crossass/) for use with Microsoft Visual Code.  
+Important: use instructions below with Esshahn/acme-assembly-vscode-template on how to install from Visual Code.
 
 Also requires [Esshahn/acme-assembly-vscode-template](https://github.com/Esshahn/acme-assembly-vscode-template).
+(just the windows binaries, other template files included here).
 
-And some manual editing of the development system is required.  
+Build launches [VICE](http://vice-emu.sourceforge.net/index.html#download) C-64 Emulator so install that too.
+
+And some manual editing of the development system and configuration files is required (e.g. ACME and VICE locations).  
 Sorry! See build.sh for use within Visual Code or build.bat for building outside of Visual Code.
 
 Additional work will be required for non-Windows platforms.
