@@ -4,11 +4,12 @@ I added some commands to Commodore 64 BASIC via software extensions
 written in 6502 Assembly.
 
 Notable features
+
 * Multiple hi-res screen support (up to 5) and swap between them
 * Two hi-res screens and color tables using 18K RAM under ROM and I/O
 * Doesn't take away any BASIC RAM, only uses $C000-D423 extra RAM
 * Copy shapes of any size between screen and memory
-* HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands
+* [HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands](https://github.com/davervw/hires-c64/raw/master/docs/hi-res%20syntax.pdf)
 * Machine language interface included if BASIC isn't your thing
 * [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll with F1/F7)
 
