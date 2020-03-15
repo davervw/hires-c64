@@ -1,3 +1,4 @@
 .DS_Store
 build/labels
-*.prg
+hires.prg
+loadhires.prg
