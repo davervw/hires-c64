@@ -29,4 +29,4 @@ Additional work will be required for non-Windows platforms.
 The introduction to this software is documented on my blog
 [www.davevw.com](https://techwithdave.davevw.com/2020/03/new-hi-res-graphics-for-commodore-64.html)
 
-[C64 disk image](https://github.com/davervw/hires-c64/raw/master/build/hires.d64)
+[C64 disk image](https://github.com/davervw/hires-c64/raw/master/build/hires.d64) LOAD"LOADHIRES.PRG",8
