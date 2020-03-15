@@ -17,7 +17,7 @@ Compiling requires [ACME](https://sourceforge.net/projects/acme-crossass/) for u
 Important: use instructions below with Esshahn/acme-assembly-vscode-template on how to install from Visual Code.
 
 Also requires [Esshahn/acme-assembly-vscode-template](https://github.com/Esshahn/acme-assembly-vscode-template).
-(just the windows binaries, other template files included here).
+(just install ACME per its instructions and copy bin/win/*.exe from repository, as its other template files are already edited and included here).
 
 Build launches [VICE](http://vice-emu.sourceforge.net/index.html#download) C-64 Emulator so install that too.
 
