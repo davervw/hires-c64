@@ -65,6 +65,15 @@ _```ADDR```_**```,```** _```X1```_**```,```**_```Y1```_
 **```TO```** _```X2```_**```,```**_```Y2```_ 
 retrieve (GET) or place (others) a shape to/from address from/to hi-res screen.  PUT stores the image to the hi-res screen.  OR/XOR/AND/NOT performs a binary combination of shape and hi-res screen contents.
 
+##### Note about IF/THEN
+
+There is a known bug in Commodore BASIC that executing the THEN clause doesn't
+work with added commands (Commodore Super Expander cartridge has the bug too!),
+so it is necessary to add a colon to work around the bug.
+
+    IF 1<2 THEN   PLOT 1,160,100 : REM Syntax Error - PLOT Command Unknown
+    IF 1<2 THEN : PLOT 1,160,100 : REM COLON : after THEN is Workaround
+
 ### More about primary and alternate screen addresses, and color tables
 
 When alternate screen is logical (color table not a valid physical color table), then byte swapping is used to switch contents between screens, but when alternate screen is physical with a valid physical color table, then the switch is instantaneous and swaps the definition of primary and alternate screens.
