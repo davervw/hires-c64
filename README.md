@@ -9,7 +9,7 @@ Notable features
 * Two hi-res screens and color tables using 18K RAM under ROM and I/O
 * Doesn't take away any BASIC RAM, only uses $C000-D423 extra RAM
 * Copy shapes of any size between screen and memory
-* [HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands](https://github.com/davervw/hires-c64/raw/master/docs/hi-res%20syntax.pdf)
+* HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands [(syntax PDF here)](https://github.com/davervw/hires-c64/raw/master/docs/hi-res%20syntax.pdf)
 * Machine language interface included if BASIC isn't your thing
 * [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll with F1/F7)
 
