@@ -29,4 +29,6 @@ Additional work will be required for non-Windows platforms.
 The introduction to this software is documented on my blog
 [www.davevw.com](https://techwithdave.davevw.com/2020/03/new-hi-res-graphics-for-commodore-64.html)
 
-[C64 disk image](https://github.com/davervw/hires-c64/raw/master/build/hires.d64) LOAD"LOADHIRES.PRG",8
+[Built C64 disk image is here](https://github.com/davervw/hires-c64/raw/master/build/hires.d64) (Recommend use [Epyx Fast Load](https://en.wikipedia.org/wiki/Epyx_Fast_Load) or equivalent to speed up disk access, including in emulators):
+    
+    LOAD"LOADHIRES",8
