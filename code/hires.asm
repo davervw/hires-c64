@@ -2410,23 +2410,23 @@ chk_phys_temp !byte 0
 
         ; C64 tokens are A09E-A19E
 tokens1 !text "HIRE"            ; CC
-            !byte "S" OR $80
+            !byte 'S' OR $80
         !text "COLO"            ; CD
-            !byte "R" OR $80
+            !byte 'R' OR $80
         !text "PLO"             ; CE
-           !byte "T" OR $80
+           !byte 'T' OR $80
         !text "SHAP"            ; CF
-            !byte "E" OR $80
+            !byte 'E' OR $80
         !text "PU"              ; D0
-          !byte "T" OR $80
+          !byte 'T' OR $80
         !text "XO"              ; D1
-          !byte "R" OR $80
+          !byte 'R' OR $80
         !text "PATTER"          ; D2
-           !byte "N" OR $80
+           !byte 'N' OR $80
         !text "SWA"             ; D3
-           !byte "P" OR $80
+           !byte 'P' OR $80
         !text "REC"             ; D4
-           !byte "T" OR $80
+           !byte 'T' OR $80
         !byte 0                 ; end of table
 
 scrledit_patch
