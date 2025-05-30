@@ -1230,11 +1230,11 @@ color_range ; given x1,y1,x2,y2, color in arg2, set color for range of pixels (t
         pla
         tax
         and #$07        ; check if previous bank
+        stx $01         ; restore banks to before
         cmp #$07        ; ...was normal
-        bne +           ; nope, no cli
+        bne ++          ; nope, no cli
         cli
-+       stx $01         ; restore banks to before
-++	rts
+++      rts
 
 case15 ; copy text screen to graphics screen, and copy color too
         ; initialize variables
