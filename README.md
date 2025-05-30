@@ -11,7 +11,7 @@ Notable features
 * Copy shapes of any size between screen and memory
 * HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands [(syntax PDF here)](https://github.com/davervw/hires-c64/raw/master/docs/hi-res%20syntax.pdf)
 * Machine language interface included if BASIC isn't your thing
-* [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll with F1/F7)
+* [Scrolling BASIC Editor](https://archive.org/details/1988-01-computegazette/page/n82) support (scroll listing with F1/F7)
 
 Compiling requires [ACME](https://sourceforge.net/projects/acme-crossass/) for use with Microsoft Visual Code.  
 Important: use instructions below with Esshahn/acme-assembly-vscode-template on how to install from Visual Code.
