@@ -1,5 +1,5 @@
 export ACME=${USERPROFILE}/Downloads/acme0.97win/acme 
-export VICE=${USERPROFILE}/Downloads/GTK3VICE-3.7-win64/bin
+export VICE=${USERPROFILE}/Downloads/GTK3VICE-3.8-win64/bin
 ${ACME}/acme -f cbm -l build/labels -o build/hires.prg code/hires.asm
 [ $? -eq 0 ] || exit 1
 bin/win/prgsize build/hires.prg > build/size.dat
