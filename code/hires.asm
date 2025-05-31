@@ -202,14 +202,18 @@ case0 ; init
 
         jsr scrledit_patch
 
+        jsr install_no_interrupt
+
+        jmp crunch_patch
+
+install_no_interrupt
         lda #<no_interrupt
         sta $fffa
         sta $fffc
         lda #>no_interrupt
         sta $fffb
         sta $fffd
-
-        jmp crunch_patch
+        rts
 
 no_interrupt ; just return
         rti
@@ -3000,7 +3004,9 @@ screen_swap
         lda #0
         lda #$04 ; 4 pages of 256 bytes
         sta arg3
-        ; continue to swap for color RAM
+        jsr swap
+        jmp install_no_interrupt ; in case swapped out
+
 swap
         ldy #$00
 -       bit arg4
