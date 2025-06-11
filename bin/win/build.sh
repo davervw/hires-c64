@@ -1,6 +1,6 @@
 export ACME=${USERPROFILE}/Downloads/acme0.97win/acme 
 export VICE=${USERPROFILE}/Downloads/GTK3VICE-3.8-win64/bin
-${ACME}/acme -f cbm -l build/labels -o build/hires.prg code/hires.asm
+${ACME}/acme -f cbm -l build/labels -r build/hires.lst -o build/hires.prg code/hires.asm
 [ $? -eq 0 ] || exit 1
 bin/win/prgsize build/hires.prg > build/size.dat
 [ $? -eq 0 ] && cat build/loaderbasic.prg build/loaderml.prg build/size.dat build/hires.prg > build/loadhires.prg

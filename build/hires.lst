@@ -1,0 +1,3033 @@
+
+; ******** Source: code/hires.asm
+     1                          ; hires.asm
+     2                          ;
+     3                          ; Commodore 64 High Resolution Graphics Functions
+     4                          ; ported to 6502 by Dave Van Wagner (davevw.com)
+     5                          ;
+     6                          ; original graphics on/off and plot from BASIC program by Paul Soper
+     7                          ;   https://paulnotebook.net/2019/06/08/plotting-a-function-in-hi-res-graphics-mode-on-a-commodore-64/
+     8                          ;   who also credits https://archive.org/details/The_Graphics_Book_for_the_Commodore_64
+     9                          ;
+    10                          ; I credit my research to the following
+    11                          ;   https://archive.org/details/Compute_s_Mapping_the_Commodore_64
+    12                          ;   https://archive.org/details/c64-programmer-ref
+    13                          ;   https://www.pagetable.com/c64disasm/
+    14                          ;   https://dustlayer.com/c64-architecture/2013/4/13/ram-under-rom
+    15                          ;   http://www.zimmers.net/cbmpics/cbm/c64/vic-ii.txt (see 2.4.2 Memory map as seen by the VIC)
+    16                          ;
+    17                          ; And there is compatibility built in with my ScrollEdit program published in 1988 (written in 1987)
+    18                          ;   https://archive.org/details/1988-01-computegazette/page/n82
+    19                          ;
+    20                          ; original keyword extensions by Dave Van Wagner
+    21                          ;
+    22                          ; DVW added line graphics and shape routines (note: BASIC algorithm shown in comments)
+    23                          ; and moved graphics to E000 under ROM and moved color ram to DC00 user ram
+    24                          ; Implemented BASIC enhanced commands and functions
+    25                          ; then implemented support for multiple graphic screens and drawing on non-active screen
+    26                          ; added patch for compatibility with Scrolling BASIC Editor
+    27                          ;
+    28                          ; KNOWN ISSUES
+    29                          ; 1. Running program multiple times, sometimes just does BRK - resets screen with READY.
+    30                          ;
+    31                          ; HIRES 0 - off, text
+    32                          ; HIRES 1 - on, no clear
+    33                          ; HIRES 1 CLR - on, w/ clear
+    34                          ; HIRES 1[,gaddr[,caddr][CLR][PLOT]] - set graphics plotting address(es), copy old to alternate.  If PLOT specified, do not switch
+    35                          ; HIRES 1,gaddr1[,caddr1]] SWAP gaddr2[,caddr2] - new syntax to allow specifying swap address(es)
+    36                          ; HIRES 1 SWAP - swap graphics screen between primary and alternate - fast switching or copying bytes depending on configuration
+    37                          ; HIRES 1 PUT - like SWAP but only copy *to* alternate screen
+    38                          ; HIRES 1 GET - like SWAP but only copy *from* alternate screen
+    39                          ; HIRES 0 PLOT - copy text screen to graphics screen
+    40                          ; COLOR 0, fg, bg, bd - resolution mode, foreground, background, border (all optional. resolution mode defaults to 0/text)
+    41                          ; COLOR 0, fg, bg @ row, col
+    42                          ; COLOR 1, fg, bg, bd - change colors on hires screen
+    43                          ; COLOR 1, fg, bg @ x, y - change pixel 8x8 cell colors
+    44                          ; COLOR 1, fg, bg @ x1, y1 TO x2, y2 - change pixel 8x8 cell colors for region of screen
+    45                          ; COLOR ,,,3 - change bg color
+    46                          ; PLOT 1, x, y - set pixel
+    47                          ; PLOT 0, x, y - clear pixel
+    48                          ; PLOT 1 @ x,y - alternate syntax
+    49                          ; PLOT 1 TO x2,y2
+    50                          ; PLOT 1,x1,y1 TO x2,y2
+    51                          ; PLOT 1,x1,y1 TO x2,y2 TO x3,y3 TO x4,y4 TO ...
+    52                          ; PLOT 1 TO x2,y2 TO x3,y3 TO ...
+    53                          ; PLOT 1,x1,y1,x2,y2 ... - alternate syntax
+    54                          ; SHAPE PUT addr, x1,y1 TO x2,y2
+    55                          ; SHAPE PUT OR addr, x1,y1 TO x2,y2
+    56                          ; SHAPE PUT XOR addr, x1,y1 TO x2,y2
+    57                          ; SHAPE PUT AND addr, x1,y1 TO x2,y2
+    58                          ; SHAPE OR addr, x1,y1 TO x2,y2
+    59                          ; SHAPE XOR addr, x1,y1 TO x2,y2
+    60                          ; SHAPE AND addr, x1,y1 TO x2,y2
+    61                          ; SHAPE NOT addr, x1,y1 to x2,y2
+    62                          ; SHAPE GET addr,x1,y1,x2,y2
+    63                          ; SHAPE GET addr, x1, y1 TO x2,y2
+    64                          ; PATTERN addr @ x1,y1 TO x2,y2 - from pattern stored in memory
+    65                          ; COLOR 0, fg @ r1, c1 TO r2, c2 - change text color for region of screen
+    66                          ; PLOT 1,"ABC",x1,y1 - note CHR$(14) lowercase, CHR$(18) reverse on, +128 to turn options off
+    67                          ; PLOT COLOR [fg][,bg] - temporarily color everything plotted, shape, and pattern, or clear options if no colors specified
+    68                          ; PLOT 0,"ABC",x1,y1 - should remove image of letters from screen - equivalent to OR+XOR(NOT)
+    69                          ; RECT pixel,x1,y1 TO x2,y2
+    70                          ; RECT pixel @ x1,y1 TO x2,y2
+    71                          ;
+    72                          ; case 0 - init variables, set vectors, etc.
+    73                          ; case 1 - graphics on
+    74                          ; case 2 - set graphic memory address to predefined
+    75                          ; case 3 - set color ram and initialize fg/bg cell colors
+    76                          ; case 4 - graphics clear
+    77                          ; case 5 - graphics off 
+    78                          ; case 6 - plot point
+    79                          ; case 7 - locate
+    80                          ; case 8 - drawto
+    81                          ; case 9 - shape size
+    82                          ; case 10- shape get
+    83                          ; case 11- shape/pattern put
+    84                          ; case 12- screen swap
+    85                          ; case 13- draw character at pixel location
+    86                          ; case 14- set fg/bg 8x8 cell color at pixel location
+    87                          ; case 15- text to graphics
+    88                          
+    89                          ; MEMORY MAP
+    90                          ; 0000-00FF Zero Page (0.25K)
+    91                          ; 0100-01FF Stack (0.25K)
+    92                          ; 0200-03FF BASIC/Kernal Usage (0.5K)
+    93                          ; 0400-07FF Text Screen (1K)
+    94                          ; 0800-9FFF BASIC Program/Variables (38K)
+    95                          ; A000-BFFF BASIC ROM // Hires bitmap SWAP (8K)
+    96                          ; C000-CFFF Hires ML (4K)
+    97                          ; D000-DBFF I/O and Text Color D800-DBFF // Character ROM D000-D7FF // Available RAM (except D800-DBFF 1K Hires SWAP color RAM) (3K)
+    98                          ; DC00-DFFF Hires color RAM (1K)
+    99                          ; E000-FFFF Kernal ROM // Hires bitmap (8K)
+   100                          
+   101                          start=$c000 ; machine language org
+   102                          ;sc=$d800    ; graphics mode swap color ram (RAM Bank)
+   103                          border=$d020; border color setting
+   104                          scroly=$d011; and enable graphics
+   105                          scrolx=$d016; and control register
+   106                          vmcsb=$d018 ; vic-ii mem ctrl reg
+   107                          syntax_error=$af08 ; BASIC ROM
+   108                          illegal_quantity=$b248 ; BASIC ROM
+   109                          chkcls=$aef7 ; checks for $29
+   110                          chkopn=$aefa ; checks for $28
+   111                          chkcom=$aefd ; checks for $2c
+   112                          chkany=$aeff ; checks for character in accumulator
+   113                          getbytc=$b79b ; parse byte expression from BASIC input
+   114                          getnum=$b7eb ; 16-bit [$14,$15] comma 8-bit [x]
+   115                          getadr=$b7f7 ; getadr - convert fp to 2 byte integer
+   116                          frmnum=$ad8a ; evaluate expression, check data type
+   117                          frmevl=$ad9e ; evaluate expression
+   118                          listchr=$ab47 ; output a character
+   119                          ayint=$b1bf ; convert fp to signed int
+   120                          
+   121                          ;zero page memory usage
+   122                          arg1=$fb
+   123                          arg2=$fc
+   124                          arg3=$fd
+   125                          arg4=$02
+   126                          ptrl=$fe
+   127                          ptrh=$ff
+   128                          
+   129                          ; "hires ml"
+   130                          * = start
+   131  c000 85fb                       sta arg1
+   132  c002 86fc                       stx arg2
+   133  c004 84fd                       sty arg3
+   134  c006 08                         php
+   135  c007 68                         pla
+   136  c008 8502                       sta arg4 ; store register flags as 4th argument
+   137                          
+   138  c00a d8                         cld ; clear decimal flag just in case
+   139                                  ;cli ; clear interrupt flag just in case
+   140                          
+   141  c00b a5fb                       lda arg1
+   142  c00d c900                       cmp #0
+   143  c00f f00e                       beq case0
+   144  c011 4c99c0                     jmp try1
+   145                          
+   146  c014 00                 option_plotting !byte 0
+   147  c015 00                 option_alternate !byte 0
+   148  c016 00                 option_apply_color !byte 0
+   149  c017 00                 option_colors_0 !byte 0
+   150  c018 00                 option_colors_1 !byte 0
+   151  c019 00                 option_colors_2 !byte 0
+   152  c01a 00                 option_colors_3 !byte 0
+   153  c01b 00                 option_colors_4 !byte 0
+   154  c01c 00                 option_colors_5 !byte 0
+   155  c01d 00                 option_colors_6 !byte 0
+   156  c01e 00                 option_colors_7 !byte 0
+   157                          
+   158                          case0 ; init
+   159  c01f 8d16c0                     sta option_apply_color
+   160  c022 ad61cf                     lda hiresfg
+   161  c025 ad62cf                     lda hiresbg
+   162                          
+   163  c028 a937                       lda #<basic_error
+   164  c02a 8d0003                     sta $300
+   165  c02d a9cf                       lda #>basic_error
+   166  c02f 8d0103                     sta $301
+   167                          
+   168  c032 a90b                       lda #<hires_crunch
+   169  c034 8d0403                     sta $304
+   170  c037 a9c8                       lda #>hires_crunch
+   171  c039 8d0503                     sta $305
+   172                          
+   173  c03c a9cf                       lda #<list_tokens
+   174  c03e 8d0603                     sta $306
+   175  c041 a9c7                       lda #>list_tokens
+   176  c043 8d0703                     sta $307
+   177                          
+   178  c046 a926                       lda #<execute
+   179  c048 8d0803                     sta $308
+   180  c04b a9c9                       lda #>execute
+   181  c04d 8d0903                     sta $309
+   182                          
+   183  c050 a9e0                       lda #$e0
+   184  c052 8d14c0                     sta option_plotting
+   185  c055 a9a0                       lda #$a0
+   186  c057 8d15c0                     sta option_alternate
+   187                          
+   188  c05a a900                       lda #0 ; not available
+   189  c05c 8d17c0                     sta option_colors_0
+   190  c05f 8d1bc0                     sta option_colors_4
+   191  c062 8d1dc0                     sta option_colors_6
+   192  c065 a90c                       lda #$0C
+   193  c067 8d18c0                     sta option_colors_1
+   194  c06a a960                       lda #$60
+   195  c06c 8d19c0                     sta option_colors_2
+   196  c06f a95c                       lda #$5C
+   197  c071 8d1ac0                     sta option_colors_3
+   198  c074 a9d8                       lda #$D8 ; should switch to $8C (or $80, $84, $88) for hardware supported color address
+   199  c076 8d1cc0                     sta option_colors_5
+   200  c079 a9dc                       lda #$DC
+   201  c07b 8d1ec0                     sta option_colors_7
+   202                          
+   203  c07e 20a6cf                     jsr scrledit_patch
+   204                          
+   205  c081 2087c0                     jsr install_no_interrupt
+   206                          
+   207  c084 4cafc8                     jmp crunch_patch
+   208                          
+   209                          install_no_interrupt
+   210  c087 a998                       lda #<no_interrupt
+   211  c089 8dfaff                     sta $fffa
+   212  c08c 8dfcff                     sta $fffc
+   213  c08f a9c0                       lda #>no_interrupt
+   214  c091 8dfbff                     sta $fffb
+   215  c094 8dfdff                     sta $fffd
+   216  c097 60                         rts
+   217                          
+   218                          no_interrupt ; just return
+   219  c098 40                         rti
+   220                          
+   221  c099 c901               try1    cmp #$01
+   222  c09b d011                       bne try2
+   223                          
+   224                          ; case 1 - init graphics
+   225  c09d ad11d0                     lda scroly
+   226  c0a0 09b0                       ora #$b0 ; set bits 7,5,4
+   227  c0a2 8d11d0                     sta scroly
+   228  c0a5 ad16d0                     lda scrolx
+   229  c0a8 29ef                       and #$ef ; turn off bit 4
+   230  c0aa 8d16d0                     sta scrolx
+   231  c0ad 60                         rts
+   232                          
+   233                          try2
+   234  c0ae c902                       cmp #$02
+   235  c0b0 d03b                       bne try3
+   236                          
+   237                                  ; case 2 - set graphic ram area
+   238  c0b2 ad14c0                     lda option_plotting
+   239  c0b5 85fb                       sta arg1
+   240  c0b7 ad00dd                     lda $dd00
+   241  c0ba 4a                         lsr             ; shift out bit0
+   242  c0bb 4a                         lsr             ; shift out bit1
+   243  c0bc 06fb                       asl arg1        ; c=hires address bit 7
+   244  c0be 2a                         rol             ; shift in bit1
+   245  c0bf 06fb                       asl arg1        ; c=hires address bit 6
+   246  c0c1 2a                         rol             ; shift in bit0
+   247  c0c2 4903                       eor #$03        ; toggle bits for vic-ii
+   248  c0c4 48                         pha
+   249                          
+   250  c0c5 ad14c0                     lda option_plotting
+   251  c0c8 206ac5                     jsr hires_to_color
+   252  c0cb 293c                       and #$3C        ; valid bits for color address
+   253  c0cd 0a                         asl
+   254  c0ce 0a                         asl             ; convert to $00..$70, high nibble is 1K bank for color
+   255  c0cf 06fb                       asl arg1        ; c=hires address bit 5
+   256  c0d1 9002                       bcc +
+   257  c0d3 0908                       ora #$08
+   258  c0d5 8d18d0             +       sta vmcsb
+   259                          
+   260  c0d8 68                         pla
+   261  c0d9 8d00dd                     sta $dd00 ;switch to vic-ii bank associated with hires address
+   262                          
+   263  c0dc 60                         rts
+   264                          
+   265                          bankram
+   266  c0dd 78                         sei      ; disable interrupts
+   267  c0de a501                       lda $01
+   268  c0e0 29f8                       and #$f8 ; mask out bits 0,1,2
+   269  c0e2 8501                       sta $01  ; a000-ffff is now ram, no i/o
+   270  c0e4 60                 	rts
+   271                          
+   272                          banknorm
+   273  c0e5 a501                       lda $01
+   274  c0e7 0907                       ora #$07        ; a000-ffff is back to defaults
+   275  c0e9 8501                       sta $01
+   276  c0eb 58                         cli
+   277  c0ec 60                 	rts
+   278                          
+   279                          try3
+   280  c0ed c903                       cmp #$03
+   281  c0ef d009                       bne try4
+   282                          
+   283                                  ; case 3 - set color ram
+   284  c0f1 20ddc0             	jsr bankram
+   285  c0f4 201dd0             	jsr case3
+   286  c0f7 4ce5c0             	jmp banknorm
+   287                          
+   288                          try4
+   289  c0fa c904                       cmp #$04
+   290  c0fc d009                       bne try5
+   291                          
+   292                                  ; case 4 - clear graphic ram
+   293  c0fe 20ddc0             	jsr bankram
+   294  c101 203bd0             	jsr case4
+   295  c104 4ce5c0             	jmp banknorm
+   296                          
+   297                          try5
+   298  c107 c905                       cmp #$05
+   299  c109 d01e                       bne try6
+   300                          
+   301                          ; case 5 - turn graphics off
+   302  c10b ad11d0                     lda scroly
+   303  c10e 299f                       and #$9f ; clr bits 5/6
+   304  c110 8d11d0                     sta scroly
+   305  c113 ad16d0                     lda scrolx
+   306  c116 29ef                       and #$ef ; clr bit 4
+   307  c118 8d16d0                     sta scrolx
+   308  c11b a914                       lda #$14
+   309  c11d 8d18d0                     sta vmcsb
+   310  c120 ad00dd                     lda $dd00
+   311  c123 0903                       ora #$03  ; set bits 0,1
+   312  c125 8d00dd                     sta $dd00 ;switch to vicii bank 0
+   313  c128 60                         rts
+   314                          
+   315                          try6
+   316  c129 c906                       cmp #$06
+   317  c12b f003                       beq is6
+   318  c12d 4c9ec1                     jmp try7
+   319                          
+   320                          is6
+   321  c130 20ddc0             	jsr bankram
+   322  c133 2059d0                     jsr case6
+   323  c136 4ce5c0                     jmp banknorm
+   324                          
+   325                          xyaddr ; given coordinates in x1lo, x1hi, y1 calculate ptrl/ptrh on screen
+   326                          
+   327  c139 a5fb                       lda arg1 ; we're gonna trash arg1,arg2 so save original values on stack
+   328  c13b 48                         pha
+   329  c13c a5fc                       lda arg2
+   330  c13e 48                         pha
+   331                          
+   332  c13f ad65cf                     lda y1
+   333  c142 29f8                       and #$f8 ; int(yc/8)*8
+   334  c144 85fb                       sta arg1
+   335  c146 a900                       lda #$00
+   336  c148 85fc                       sta arg2
+   337  c14a 06fb                       asl arg1 ; *2 more (=*16)
+   338  c14c 26fc                       rol arg2
+   339  c14e 06fb                       asl arg1 ; *2 more (=*32)
+   340  c150 26fc                       rol arg2
+   341  c152 06fb                       asl arg1 ; *2 more (=*64)
+   342  c154 26fc                       rol arg2
+   343  c156 a205                       ldx #5  ; setup *5 more (=*320)
+   344  c158 a900                       lda #$00
+   345  c15a 85fe                       sta ptrl ; zero out result
+   346  c15c 85ff                       sta ptrh
+   347                          
+   348                          mult5
+   349  c15e 18                         clc
+   350  c15f a5fe                       lda ptrl
+   351  c161 65fb                       adc arg1
+   352  c163 85fe                       sta ptrl
+   353  c165 a5ff                       lda ptrh
+   354  c167 65fc                       adc arg2
+   355  c169 85ff                       sta ptrh
+   356  c16b ca                         dex
+   357  c16c d0f0                       bne mult5 ; loop until *320 done
+   358                          
+   359  c16e ad65cf                     lda y1
+   360  c171 2907                       and #$07
+   361  c173 18                         clc
+   362  c174 65fe                       adc ptrl ; ptr += yc and 7
+   363  c176 85fe                       sta ptrl
+   364  c178 a5ff                       lda ptrh
+   365  c17a 6900                       adc #$00
+   366  c17c 85ff                       sta ptrh
+   367                          
+   368  c17e ad63cf                     lda x1lo
+   369  c181 29f8                       and#$f8 ; 8*int(xc/8)
+   370  c183 18                         clc
+   371  c184 65fe                       adc ptrl  ; ptr += 8*int(xc/8)
+   372  c186 85fe                       sta ptrl
+   373  c188 ad64cf                     lda x1hi
+   374  c18b 65ff                       adc ptrh
+   375  c18d 85ff                       sta ptrh
+   376                          
+   377  c18f 18                         clc       ; add offset to graphics adapter
+   378  c190 a5ff                       lda ptrh
+   379  c192 6d14c0                     adc option_plotting
+   380  c195 85ff                       sta ptrh
+   381                          
+   382  c197 68                         pla      ; restore original values of arg1,arg2 from stack
+   383  c198 85fc                       sta arg2
+   384  c19a 68                         pla
+   385  c19b 85fb                       sta arg1
+   386                          
+   387  c19d 60                         rts
+   388                          
+   389                          try7
+   390  c19e c907                       cmp #7
+   391  c1a0 f036                       beq case7
+   392  c1a2 c908                       cmp #8
+   393  c1a4 f044                       beq case8
+   394  c1a6 c909                       cmp #9
+   395  c1a8 d003                       bne +
+   396  c1aa 4c04c2                     jmp case9
+   397  c1ad c90a               +       cmp #10
+   398  c1af d003                       bne +
+   399  c1b1 4c66c2                     jmp case10
+   400  c1b4 c90b               +       cmp #11
+   401  c1b6 d003                       bne +
+   402  c1b8 4c5ac3                     jmp case11
+   403  c1bb c90c               +       cmp #12
+   404  c1bd d003                       bne +
+   405  c1bf 4c61c5                     jmp case12
+   406  c1c2 c90d               +       cmp #13
+   407  c1c4 d003                       bne +
+   408  c1c6 4c74c5                     jmp case13
+   409  c1c9 c90e               +       cmp #14
+   410  c1cb d003                       bne +
+   411  c1cd 4cf3c5                     jmp case14
+   412  c1d0 c90f               +       cmp #15
+   413  c1d2 d003                       bne +
+   414  c1d4 4cd9c6                     jmp case15
+   415  c1d7 60                 +       rts ; default case - do nothing
+   416                          
+   417                          ; line graphics algorithm implemented by davevw
+   418                          ; from memory from the 80s, and it worked!
+   419                          ;
+   420                          ; 32000 xs=x2-x1:ys=y2-y1
+   421                          ; 32010 if abs(xs) < abs(ys) then 32100
+   422                          ; 32020 yc=y1:yf=0:xi=xs/abs(xs)
+   423                          ; 32030 for xc=x1 to x2 step xi
+   424                          ; 32040 gosub 30000 ; rem plot point xc,yc
+   425                          ; 32050 yf=yf+ys
+   426                          ; 32060 if (ys>0 and yf>=abs(xs)) then yc=yc+1:yf=yf-abs(xs)
+   427                          ; 32070 if (ys<0 and yf<=-abs(xs)) then yc=yc-1:yf=yf+abs(xs)
+   428                          ; 32080 next xc
+   429                          ; 32090 return
+   430                          ; 32100 xc=x1:xf=0:yi=ys/abs(ys)
+   431                          ; 32110 for yc=y1 to y2 step yi
+   432                          ; 32120 gosub 30000 ; rem plot point xc,yc
+   433                          ; 32130 xf=xf+xs
+   434                          ; 32140 if (xs>0 and xf>=abs(ys)) then xc=xc+1:xf=xf-abs(ys)
+   435                          ; 32150 if (xs<0 and xf<=-abs(ys)) then xc=xc-1:xf=xf+abs(ys)
+   436                          ; 32160 next yc
+   437                          ; 32170 return
+   438                          
+   439                          case7 ; locate x1, y1
+   440  c1d8 a5fc                       lda arg2
+   441  c1da 8d63cf                     sta x1lo
+   442  c1dd a5fd                       lda arg3
+   443  c1df 8d65cf                     sta y1
+   444  c1e2 a502                       lda arg4
+   445  c1e4 2901                       and #$01
+   446  c1e6 8d64cf                     sta x1hi
+   447  c1e9 60                         rts
+   448                          
+   449                          case8 ; draw line to x2, y2
+   450  c1ea a5fc                       lda arg2 ; store arguments at x2, y2
+   451  c1ec 8d66cf                     sta x2lo
+   452  c1ef a5fd                       lda arg3
+   453  c1f1 8d68cf                     sta y2
+   454  c1f4 a502                       lda arg4
+   455  c1f6 2901                       and #$01
+   456  c1f8 8d67cf                     sta x2hi
+   457                          
+   458  c1fb 20ddc0             	jsr bankram
+   459  c1fe 20cfd0                     jsr line
+   460  c201 4ce5c0             	jmp banknorm
+   461                                  ; note x1,y1 should match x2,y2 at this point
+   462                          
+   463                          ; test code for shape size
+   464                          ; (dependency: locate)
+   465                          ; 33000 rem locate x1,y1
+   466                          ; 33001 poke 780,9:poke 781,x1 and 255:poke 782,y1:poke 783,x1/256:sys ml
+   467                          ; 33002 return
+   468                          ; 35000 rem size shape to x2,y2
+   469                          ; 35001 poke 780,9:poke 781,x2 and 255:poke 782,y2:poke 783,x2/256:sys ml
+   470                          ; 35002 sz=peek(781)+256*peek(782)
+   471                          ; 35003 return
+   472                          ; ml=49152:x1=0:y1=0:x2=319:y2=199:gosub 33000:gosub 35000:print sz
+   473                          
+   474                          case9                   ; shape size
+   475  c204 a5fc                       lda arg2
+   476  c206 8d66cf                     sta x2lo
+   477  c209 a5fd                       lda arg3
+   478  c20b 8d68cf                     sta y2
+   479  c20e a502                       lda arg4
+   480  c210 2901                       and #$01
+   481  c212 8d67cf                     sta x2hi
+   482                          
+   483  c215 ae66cf             case9c  ldx x2lo        ; increment x2 one pixel for size
+   484  c218 ac67cf                     ldy x2hi        ; in registers only so don't affect values
+   485  c21b e8                         inx
+   486  c21c d001                       bne +
+   487  c21e c8                         iny
+   488  c21f 38                 +       sec
+   489  c220 8a                         txa             ; (x2+1)lo
+   490  c221 ed63cf                     sbc x1lo
+   491  c224 8d69cf                     sta xslo
+   492  c227 98                         tya             ; (x2+1)hi
+   493  c228 ed64cf                     sbc x1hi
+   494  c22b 8d6acf                     sta xshi
+   495  c22e 3031                       bmi sizeinvalid
+   496  c230 0d69cf                     ora xslo
+   497  c233 f02c                       beq sizeinvalid
+   498  c235 ac68cf                     ldy y2
+   499  c238 c8                         iny             ; increment for size without affecting memory
+   500  c239 98                         tya
+   501  c23a ed65cf                     sbc y1
+   502  c23d 8d6bcf                     sta yslo
+   503  c240 901f                       bcc sizeinvalid
+   504  c242 f01d                       beq sizeinvalid
+   505  c244 18                         clc
+   506  c245 ad69cf                     lda xslo
+   507  c248 6907                       adc #$07        ; round up to nearest 8 bits
+   508  c24a 29f8                       and #$F8        ; mask out lower bits
+   509  c24c ae6acf                     ldx xshi        ; retrieve high byte
+   510  c24f 9001                       bcc +
+   511  c251 e8                         inx             ; carry increases high byte
+   512  c252 a8                 +       tay             ; save A
+   513  c253 8a                         txa             ; retrieve high byte
+   514  c254 4a                         lsr             ; transfer high bit into carry
+   515  c255 98                         tya             ; retrieve A
+   516  c256 6a                         ror             ; /2 with high bit rotating in
+   517  c257 4a                         lsr             ; /2
+   518  c258 4a                         lsr             ; /2
+   519  c259 aa                         tax
+   520  c25a ac6bcf                     ldy yslo
+   521  c25d 2097c7                     jsr multxy      ; xy=x*y
+   522  c260 60                         rts             ; have answer
+   523                          sizeinvalid
+   524  c261 a900                       lda #$00
+   525  c263 aa                         tax
+   526  c264 a8                         tay
+   527  c265 60                         rts
+   528                          
+   529                          case10  ; shape get to (X2,Y2), see locate and shape size, input dst ptr
+   530                                  ; create multiply function to position to (X1,Y1) address ptr -> src
+   531                                  ; shift = (X1 AND 7)
+   532                                  ; right_mod = ((X2+1-X1) AND 7);
+   533                                  ; right_mask = (255 << (8-right_mod)) AND 255;
+   534                                  ; // 0:255, 1:128, 2:192, ..., 7:254
+   535                                  ; columns = int((x2+1-x1+7)/8)
+   536                                  ; do
+   537                                  ; {
+   538                                  ;   ys = y2+1-y1;
+   539                                  ;   do
+   540                                  ;   {
+   541                                  ;     *dst = (*src << shift) | ((*(src+8) << shift) >> 8)
+   542                                  ;     if (columns == 1)
+   543                                  ;       *dst = *dst & right_mask;
+   544                                  ;     ++dst;
+   545                                  ;     ++src;
+   546                                  ;     if ((src & 7) == 0)
+   547                                  ;        src += 312;
+   548                                  ;   } while (--ys > 0);
+   549                                  ;   x1 += 8;
+   550                                  ;   src = xyaddr(x1, y1)
+   551                                  ; } while (--columns > 0);
+   552                          
+   553  c266 2015c2                     jsr case9c      ; get shape size, verify not invalid
+   554  c269 e000                       cpx #$00
+   555  c26b d00d                       bne +
+   556  c26d c000                       cpy #$00
+   557  c26f d009                       bne +
+   558  c271 85fe                       sta ptrl        ; wipe out source address
+   559  c273 85ff                       sta ptrh
+   560  c275 a6fe                       ldx ptrl        ; return null address end to signal error
+   561  c277 a4ff                       ldy ptrh
+   562  c279 60                         rts             ; FAILED
+   563                          
+   564  c27a 2039c1             +       jsr xyaddr      ; get address of (X,Y)
+   565                          
+   566  c27d ad63cf                     lda x1lo
+   567  c280 2907                       and #$07
+   568  c282 85fb                       sta arg1        ; shift
+   569                          
+   570  c284 ae66cf                     ldx x2lo
+   571  c287 e8                         inx
+   572  c288 8a                         txa
+   573  c289 38                         sec
+   574  c28a ed63cf                     sbc x1lo
+   575  c28d 2907                       and #$07
+   576  c28f aa                         tax
+   577  c290 a9ff                       lda #$ff
+   578  c292 e000                       cpx #$00
+   579  c294 f007                       beq +
+   580  c296 a900                       lda #0
+   581  c298 38                 -       sec
+   582  c299 6a                         ror
+   583  c29a ca                         dex
+   584  c29b d0fb                       bne -
+   585  c29d 8502               +       sta arg4        ; right_mask
+   586                          
+   587  c29f ac67cf                     ldy x2hi        ; calculate x distance
+   588  c2a2 ae66cf                     ldx x2lo
+   589  c2a5 e8                         inx
+   590  c2a6 d001                       bne +
+   591  c2a8 c8                         iny
+   592  c2a9 38                 +       sec
+   593  c2aa 8a                         txa
+   594  c2ab ed63cf                     sbc x1lo
+   595  c2ae 8d69cf                     sta xslo
+   596  c2b1 98                         tya
+   597  c2b2 ed64cf                     sbc x1hi
+   598  c2b5 8d6acf                     sta xshi
+   599                          
+   600  c2b8 18                         clc             ; round up to full byte
+   601  c2b9 ad69cf                     lda xslo
+   602  c2bc 6907                       adc #7
+   603  c2be 29f8                       and #$F8
+   604  c2c0 8d69cf                     sta xslo
+   605  c2c3 9003                       bcc +
+   606  c2c5 ee6acf                     inc xshi
+   607                          +
+   608                          
+   609  c2c8 4e6acf                     lsr xshi        ; divide x distance by 8, result fits in byte
+   610  c2cb 6e69cf                     ror xslo
+   611  c2ce 4e69cf                     lsr xslo
+   612  c2d1 4e69cf                     lsr xslo
+   613                          
+   614  c2d4 ac68cf                     ldy y2          ; calculate y distance
+   615  c2d7 c8                         iny
+   616  c2d8 98                         tya
+   617  c2d9 38                         sec
+   618  c2da ed65cf                     sbc y1
+   619  c2dd 8d6bcf                     sta yslo
+   620  c2e0 8d6ccf                     sta yshi
+   621                          
+   622  c2e3 20ddc0             	jsr bankram
+   623                          
+   624                                                  ; for y=Y1 to Y2 (in count only)
+   625                                                  ; for x=X1 to X2 step 8 (in count only)
+   626  c2e6 a000                       ldy #$00        ; clear pointer offset
+   627                          
+   628  c2e8 b1fe               --      lda (ptrl),y    ; retrieve this column
+   629  c2ea 8d6dcf                     sta fraclo      ; left column
+   630  c2ed a008                       ldy #8          ; next column is only 8 bytes away
+   631  c2ef b1fe                       lda (ptrl),y    ; retrieve from next column to right
+   632  c2f1 8d6ecf                     sta frachi      ; right column
+   633  c2f4 a6fb                       ldx arg1        ; retrieve shift count again for loop
+   634  c2f6 f009                       beq +
+   635  c2f8 0e6ecf             -       asl frachi      ; shift right bits, direction left
+   636  c2fb 2e6dcf                     rol fraclo      ; rotate carry into left bits, direction left
+   637  c2fe ca                         dex
+   638  c2ff d0f7                       bne -           ; repeat
+   639  c301 ad6dcf             +       lda fraclo      ; get shifted bits for this column
+   640  c304 ae69cf                     ldx xslo
+   641  c307 e001                       cpx #1          ; last column?
+   642  c309 d002                       bne +           ; no - so skip
+   643  c30b 2502                       and arg4        ; and right_mask
+   644  c30d a000               +       ldy #0          ; clear pointer offset
+   645  c30f 91fc                       sta (arg2),y    ; store resulting data
+   646                          
+   647  c311 e6fe                       inc ptrl        ; ++ptr
+   648  c313 d002                       bne +
+   649  c315 e6ff                       inc ptrh
+   650  c317 a5fe               +       lda ptrl
+   651                          
+   652  c319 2907                       and #$07        ; (ptr & 7) == 0) ?
+   653  c31b d00d                       bne +           ; branch if no
+   654  c31d 18                         clc             ; yes - ptr += 312
+   655  c31e a5fe                       lda ptrl
+   656  c320 6938                       adc #<312
+   657  c322 85fe                       sta ptrl
+   658  c324 a5ff                       lda ptrh
+   659  c326 6901                       adc #>312
+   660  c328 85ff                       sta ptrh
+   661                          
+   662  c32a e6fc               +       inc arg2        ; ++dst
+   663  c32c d002                       bne +
+   664  c32e e6fd                       inc arg3
+   665                          
+   666  c330 ce6bcf             +       dec yslo        ; next y
+   667  c333 d0b3                       bne --
+   668                          
+   669  c335 18                         clc             ; x1 += 8
+   670  c336 ad63cf                     lda x1lo
+   671  c339 6908                       adc #8
+   672  c33b 8d63cf                     sta x1lo
+   673  c33e 9003                       bcc +
+   674  c340 ee64cf                     inc x1hi
+   675                          
+   676  c343 2039c1             +       jsr xyaddr     ; get next src addr into ptr
+   677                          
+   678  c346 ad6ccf                     lda yshi        ; restore y distance
+   679  c349 8d6bcf                     sta yslo
+   680                          
+   681  c34c ce69cf                     dec xslo        ; next x column (always a byte)
+   682  c34f d097                       bne --
+   683                          
+   684  c351 a5fc                       lda arg2        ; put end of buffer in x,y registers
+   685  c353 aa                         tax
+   686  c354 a5fd                       lda arg3
+   687  c356 a8                         tay
+   688                          
+   689  c357 4ce5c0             	jmp banknorm
+   690                          
+   691                          case11  ; shape put to (X2,Y2), see locate and shape size, input src ptr
+   692                                  ; create multiply function to position to (X1,Y1) address ptr -> dst
+   693                                  ; shift = (X1 AND 7);
+   694                                  ; left_mask = 255 >> shift;
+   695                                  ; right_mask = fn(X2 AND 7) = 0:128,1:192,2:224,3:240,4:248,5:252,6:254,7:255
+   696                                  ; columns = int((x2+1-(x1 and 248)+7)/8); // screen columns
+   697                                  ; if (columns == 1)
+   698                                  ; {
+   699                                  ;   left_mask = left_mask and right_mask;
+   700                                  ;   right_mask = left_mask;
+   701                                  ; }
+   702                                  ; do
+   703                                  ; {
+   704                                  ;   ys = y2+1-y1;
+   705                                  ;   do
+   706                                  ;   {
+   707                                  ;     if (left_mask != 255)
+   708                                  ;       data = (*src >> shift); // left-most column
+   709                                  ;     else
+   710                                  ;       data = ((*(src-(y2+1-y1)) << 8) >> shift) | (*src >> shift); // other
+   711                                  ;     if (columns == 1)
+   712                                  ;       *dst = *dst & (^right_mask) | (data & right_mask);
+   713                                  ;     else if (left_mask = 255)
+   714                                  ;       *dst = data;
+   715                                  ;     else
+   716                                  ;       *dst = *dst & (^left_mask) | (data & left_mask);
+   717                                  ;     ++dst;
+   718                                  ;     if ((dst & 7) == 0)
+   719                                  ;        dst += 312;
+   720                                  ;     ++src;
+   721                                  ;   } while (--ys > 0);
+   722                                  ;   x1 += 8;
+   723                                  ;   left_mask = 255;
+   724                                  ;   dst = xyaddr(x1, y1)
+   725                                  ; } while (--columns > 0);
+   726                          
+   727  c35a a900                       lda #0
+   728  c35c 8d5bcf                     sta pattern_flag ; *NOT* PATTERN
+   729                          case11b
+   730  c35f a502                       lda arg4        ; flags
+   731  c361 2943                       and #$43        ; mask to flags we care about
+   732  c363 8d6ecf             +       sta frachi      ; save shape mode: 0x00=normal, 0x01=or, 0x02=and, 0x03=eor, 0x04=not
+   733                          
+   734  c366 2015c2                     jsr case9c      ; get shape size, verify not invalid
+   735  c369 e000                       cpx #$00
+   736  c36b d009                       bne +
+   737  c36d c000                       cpy #$00
+   738  c36f d005                       bne +
+   739  c371 85fe                       sta ptrl        ; wipe out source address
+   740  c373 85ff                       sta ptrh
+   741  c375 60                         rts             ; FAILED
+   742                          
+   743  c376 2039c1             +       jsr xyaddr      ; get address of (X,Y)
+   744                          
+   745  c379 ad65cf                     lda y1
+   746  c37c 8d74cf                     sta case14_yslo ; save copy of y1 in case applying color later
+   747  c37f ad64cf                     lda x1hi
+   748  c382 8d73cf                     sta case14_xshi ; save copy of x1hi in case applying color later
+   749  c385 ad63cf                     lda x1lo
+   750  c388 8d72cf                     sta case14_xslo ; save copy of x1lo in case applying color later
+   751  c38b 2907                       and #$07
+   752  c38d 85fb                       sta arg1        ; shift
+   753                          
+   754  c38f ad66cf                     lda x2lo        ; calculate right_mask, based solely on x2 bit position
+   755  c392 2907                       and #$07
+   756  c394 aa                         tax
+   757  c395 e8                         inx
+   758  c396 38                 -       sec
+   759  c397 6a                         ror
+   760  c398 ca                         dex
+   761  c399 d0fb                       bne -
+   762  c39b 8502               +       sta arg4        ; right_mask
+   763                          
+   764  c39d ad63cf                     lda x1lo        ; include full left column screen byte
+   765  c3a0 29f8                       and #$f8        ;   so will count all screen columns necessary for shape put
+   766  c3a2 8d63cf                     sta x1lo
+   767                          
+   768  c3a5 ac67cf                     ldy x2hi        ; calculate x distance
+   769  c3a8 ae66cf                     ldx x2lo
+   770  c3ab e8                         inx
+   771  c3ac d001                       bne +
+   772  c3ae c8                         iny
+   773  c3af 38                 +       sec
+   774  c3b0 8a                         txa
+   775  c3b1 ed63cf                     sbc x1lo
+   776  c3b4 8d69cf                     sta xslo
+   777  c3b7 98                         tya
+   778  c3b8 ed64cf                     sbc x1hi
+   779  c3bb 8d6acf                     sta xshi
+   780                          
+   781  c3be 18                         clc             ; round up to full byte
+   782  c3bf ad69cf                     lda xslo
+   783  c3c2 6907                       adc #7
+   784  c3c4 29f8                       and #$F8
+   785  c3c6 8d69cf                     sta xslo
+   786  c3c9 9003                       bcc +
+   787  c3cb ee6acf                     inc xshi
+   788                          +
+   789                          
+   790  c3ce 4e6acf                     lsr xshi        ; divide x distance by 8, result fits in byte
+   791  c3d1 6e69cf                     ror xslo
+   792  c3d4 4e69cf                     lsr xslo
+   793  c3d7 4e69cf                     lsr xslo
+   794                          
+   795  c3da ac68cf                     ldy y2          ; calculate y distance
+   796  c3dd c8                         iny
+   797  c3de 98                         tya
+   798  c3df 38                         sec
+   799  c3e0 ed65cf                     sbc y1
+   800  c3e3 8d6bcf                     sta yslo
+   801  c3e6 8d6ccf                     sta yshi
+   802                          
+   803  c3e9 a9ff                       lda #$ff        ; calculate left_mask
+   804  c3eb a6fb                       ldx arg1        ; shift
+   805  c3ed f004                       beq +
+   806  c3ef 4a                 -       lsr
+   807  c3f0 ca                         dex
+   808  c3f1 d0fc                       bne -
+   809  c3f3 8d6acf             +       sta xshi        ; left_mask
+   810                          
+   811                                  ; if one column, left_mask and right_mask need combining into one mask
+   812  c3f6 ae69cf                     ldx xslo        ; columns
+   813  c3f9 e001                       cpx #$01        ; 1?
+   814  c3fb d007                       bne +           ; no, skip this
+   815  c3fd 2502                       and arg4        ; yes, combine with right_mask
+   816  c3ff 8502                       sta arg4        ; store right_mask
+   817  c401 8d6acf                     sta xshi        ; store left_mask
+   818                          
+   819  c404 78                 +       sei
+   820  c405 a501                       lda $01
+   821  c407 2907                       and #7
+   822  c409 c907                       cmp #7
+   823  c40b f009                       beq +
+   824  c40d a501                       lda $01         ; non-default bank already selected (e.g. char rom visible)
+   825  c40f 29fd                       and #$fd        ; mask out only bit 1
+   826  c411 8501                       sta $01         ; make sure e000-ffff is now ram, no i/o
+   827  c413 4c1cc4                     jmp ++
+   828  c416 a501               +       lda $01
+   829  c418 29f8                       and #$f8        ; mask out bits 0,1,2
+   830  c41a 8501                       sta $01         ; all 64k ram
+   831                          
+   832  c41c a901               ++      lda #01
+   833  c41e 8d6fcf                     sta incr        ; record that this is the first column
+   834                          
+   835                                                  ; for y=Y1 to Y2 (in count only)
+   836                                                  ; for x=X1 to X2 step 8 (in count only)
+   837                          
+   838  c421 a000                       ldy #$00        ; clear pointer offset
+   839                          
+   840  c423 2c5bcf             --      bit pattern_flag
+   841  c426 7028                       bvs .pattern_case
+   842                          
+   843                                  ;shape case
+   844  c428 b1fc                       lda (arg2),y    ; retrieve shape data from memory
+   845  c42a ae6fcf                     ldx incr        ; left-most column flag? simple case, no data to our left
+   846  c42d f00a                       beq +           ; no - skip to general case
+   847  c42f a6fb                       ldx arg1        ; shift count
+   848  c431 f035                       beq ++          ; simple case - no shift, branch to store
+   849  c433 4a                 -       lsr             ; shift data right by count
+   850  c434 ca                         dex
+   851  c435 d0fc                       bne -           ; repeat until done
+   852  c437 f02f                       beq ++          ; skip over general case
+   853                          
+   854  c439 8d6dcf             +       sta fraclo      ; left data
+   855  c43c ac6ccf                     ldy yshi        ; y size
+   856  c43f b1fc                       lda (arg2),y    ; load this column data
+   857  c441 a000                       ldy #0          ; reset index for pointers
+   858  c443 a6fb                       ldx arg1        ; shift count
+   859  c445 f021                       beq ++          ; done with this case
+   860  c447 4e6dcf             -       lsr fraclo      ; rotate left data
+   861  c44a 6a                         ror             ; rotate carry into right data
+   862  c44b ca                         dex
+   863  c44c d0f9                       bne -           ; repeat until done
+   864  c44e f018                       beq ++          ; skip over pattern_case
+   865                          
+   866                          .pattern_case
+   867  c450 a5fe                       lda ptrl
+   868  c452 2907                       and #$07
+   869  c454 a8                         tay
+   870  c455 b1fc                       lda (arg2),y    ; retrieve shape data from memory
+   871  c457 ae6fcf                     ldx incr        ; left-most column flag? simple case, no data to our left
+   872  c45a d005                       bne +
+   873  c45c 2d6acf                     and xshi
+   874  c45f f005                       beq .pattern_case_exit ; skip over general case
+   875                          
+   876  c461 8d6dcf             +       sta fraclo      ; left data
+   877  c464 b1fc                       lda (arg2),y    ; load next column data
+   878                          .pattern_case_exit
+   879  c466 a000                       ldy #0          ; reset index for storage
+   880                          
+   881                                  ; check if columns = 1 (last column)
+   882  c468 ae69cf             ++      ldx xslo        ; column
+   883  c46b e001                       cpx #1          ; last?
+   884  c46d d00c                       bne +
+   885  c46f 2502                       and arg4        ; right_mask
+   886  c471 8d6dcf                     sta fraclo
+   887  c474 a502                       lda arg4
+   888  c476 49ff                       eor #$ff
+   889  c478 4c95c4                     jmp ++
+   890                          
+   891                                  ; check if general interior case, simple store
+   892  c47b ae6acf             +       ldx xshi        ; left_mask
+   893  c47e e0ff                       cpx #$ff        ; left most?
+   894  c480 d008                       bne +           ; no, branch to left case
+   895  c482 8d6dcf                     sta fraclo      ; simple case, just store
+   896  c485 a900                       lda #$00
+   897  c487 4c95c4                     jmp ++
+   898                          
+   899                                  ; handle first column case where shift was required
+   900  c48a 2d6acf             +       and xshi        ; left_mask
+   901  c48d 8d6dcf                     sta fraclo
+   902  c490 ad6acf                     lda xshi
+   903  c493 49ff                       eor #$ff
+   904                          
+   905  c495 ae6ecf             ++      ldx frachi      ; check put mode
+   906  c498 f03b                       beq ++          ; branch if zero
+   907  c49a e001               +       cpx #1
+   908  c49c d00a                       bne +           ; branch if not or mode
+   909                                  ; or mode
+   910  c49e b1fe                       lda (ptrl),y    ; keep all previous bits
+   911  c4a0 0d6dcf                     ora fraclo      ; combine with what to put
+   912  c4a3 91fe                       sta (ptrl),y    ; store result
+   913  c4a5 4cdcc4                     jmp +++
+   914  c4a8 e002               +       cpx #2
+   915  c4aa d00a                       bne +
+   916                                  ; and mode
+   917  c4ac b1fe                       lda (ptrl),y    ; keep all previous bits
+   918  c4ae 2d6dcf                     and fraclo      ; combine with what to put
+   919  c4b1 91fe                       sta (ptrl),y    ; store result
+   920  c4b3 4cdcc4                     jmp +++
+   921  c4b6 e003               +       cpx #3
+   922  c4b8 d00a                       bne +           ; branch if not eor mode
+   923                                  ; eor mode
+   924  c4ba b1fe                       lda (ptrl),y    ; keep all previous bits
+   925  c4bc 4d6dcf                     eor fraclo      ; combine with what to put
+   926  c4bf 91fe                       sta (ptrl),y    ; store result
+   927  c4c1 4cdcc4                     jmp +++
+   928  c4c4 e040               +       cpx #$40
+   929  c4c6 d014                       bne +++         ; branch if not not mode
+   930                                  ; not/erase mode
+   931  c4c8 b1fe                       lda (ptrl),y    ; keep all previous bits
+   932  c4ca 0d6dcf                     ora fraclo      ; turn on bits
+   933  c4cd 4d6dcf                     eor fraclo      ; invert to erase
+   934  c4d0 91fe                       sta (ptrl),y    ; store result
+   935  c4d2 4cdcc4                     jmp +++
+   936                          
+   937                                  ; store mode
+   938  c4d5 31fe               ++      and (ptrl),y    ; mask what to keep
+   939  c4d7 0d6dcf                     ora fraclo      ; combine with what to put
+   940  c4da 91fe                       sta (ptrl),y    ; store result
+   941                          
+   942  c4dc e6fe               +++     inc ptrl        ; ++ptr
+   943  c4de d002                       bne +
+   944  c4e0 e6ff                       inc ptrh
+   945  c4e2 a5fe               +       lda ptrl
+   946                          
+   947  c4e4 2907                       and #$07        ; (ptr & 7) == 0) ?
+   948  c4e6 d00d                       bne +           ; branch if no
+   949  c4e8 18                         clc             ; yes - ptr += 312
+   950  c4e9 a5fe                       lda ptrl
+   951  c4eb 6938                       adc #<312
+   952  c4ed 85fe                       sta ptrl
+   953  c4ef a5ff                       lda ptrh
+   954  c4f1 6901                       adc #>312
+   955  c4f3 85ff                       sta ptrh
+   956                          
+   957  c4f5 2c5bcf             +       bit pattern_flag
+   958  c4f8 7006                       bvs +           ; skip if pattern
+   959  c4fa e6fc                       inc arg2        ; ++src
+   960  c4fc d002                       bne +
+   961  c4fe e6fd                       inc arg3
+   962                          
+   963  c500 ce6bcf             +       dec yslo        ; next y
+   964  c503 f003                       beq +
+   965  c505 4c23c4                     jmp --
+   966                          
+   967  c508 18                 +       clc             ; x1 += 8
+   968  c509 ad63cf                     lda x1lo
+   969  c50c 6908                       adc #8
+   970  c50e 8d63cf                     sta x1lo
+   971  c511 9003                       bcc +
+   972  c513 ee64cf                     inc x1hi
+   973                          
+   974  c516 a9ff               +       lda #$ff        ; interior - not left column anymore
+   975  c518 8d6acf                     sta xshi        ; left_mask
+   976                          
+   977  c51b ad6fcf                     lda incr        ; check if was first/left column
+   978  c51e f014                       beq +
+   979  c520 ce6fcf                     dec incr        ; reset to zero
+   980  c523 2c5bcf                     bit pattern_flag
+   981  c526 700c                       bvs +           ; skip if pattern
+   982  c528 38                         sec             ; reset source pointer to left most data by rewinding y distance bytes
+   983  c529 a5fc                       lda arg2        ;  because we are now going to shift two sets of data together
+   984  c52b ed6ccf                     sbc yshi
+   985  c52e 85fc                       sta arg2
+   986  c530 b002                       bcs +
+   987  c532 c6fd                       dec arg3        
+   988                          
+   989  c534 2039c1             +       jsr xyaddr      ; get next src addr into ptr
+   990                          
+   991  c537 ad6ccf                     lda yshi        ; restore y distance
+   992  c53a 8d6bcf                     sta yslo
+   993                          
+   994  c53d ce69cf                     dec xslo        ; next x column (always a byte)
+   995  c540 f003                       beq +
+   996  c542 4c23c4                     jmp --
+   997                          
+   998  c545 a5fc               +       lda arg2        ; put end of buffer in x,y registers
+   999  c547 aa                         tax
+  1000  c548 a5fd                       lda arg3
+  1001  c54a a8                         tay
+  1002                          
+  1003  c54b 2c16c0                     bit option_apply_color
+  1004  c54e 5006                       bvc +
+  1005                          
+  1006  c550 20ddc0                     jsr bankram     ; required in case was char rom
+  1007  c553 202fd3                     jsr case11_apply_color
+  1008                          
+  1009  c556 4ce5c0             +	jmp banknorm    ; no matter what, go back to normal banking
+  1010                          
+  1011                          pattern
+  1012  c559 a940                       lda #$40        ; BIT $pattern_flag will set overflow
+  1013  c55b 8d5bcf                     sta pattern_flag ; YES PATTERN
+  1014  c55e 4c5fc3                     jmp case11b
+  1015                          
+  1016                          case12           ; screen swap
+  1017  c561 20ddc0                     jsr bankram
+  1018  c564 20cfd3                     jsr screen_swap
+  1019  c567 4ce5c0                     jmp banknorm
+  1020                          
+  1021                          hires_to_color
+  1022  c56a 4a                         lsr
+  1023  c56b 4a                         lsr
+  1024  c56c 4a                         lsr
+  1025  c56d 4a                         lsr
+  1026  c56e 4a                         lsr
+  1027  c56f aa                         tax
+  1028  c570 bd17c0                     lda option_colors_0,x
+  1029  c573 60                         rts
+  1030                          
+  1031                          case13          ; draw character at prior set location, screen character X, high bit in Y
+  1032  c574 8a                         txa
+  1033  c575 48                         pha             ; save x register to stack
+  1034  c576 98                         tya
+  1035  c577 48                         pha             ; save y register to stack
+  1036                          
+  1037                                  ;               calculate (x2,y2) for character placment
+  1038  c578 18                         clc
+  1039  c579 ad63cf                     lda x1lo
+  1040  c57c 6907                       adc #7
+  1041  c57e 8d66cf                     sta x2lo
+  1042  c581 ad64cf                     lda x1hi
+  1043  c584 6900                       adc #0
+  1044  c586 8d67cf                     sta x2hi
+  1045  c589 18                         clc
+  1046  c58a ad65cf                     lda y1
+  1047  c58d 6907                       adc #7
+  1048  c58f 8d68cf                     sta y2
+  1049  c592 2015c2                     jsr case9c      ; call shape size operation
+  1050  c595 e000                       cpx #0
+  1051  c597 d00a                       bne +
+  1052  c599 c000                       cpy #0
+  1053  c59b d006                       bne +
+  1054  c59d a8                         tay             ; set Y to zero for high size byte
+  1055  c59e 68                         pla             ; reclaim y register from stack
+  1056  c59f 68                         pla             ; reclaim x register from stack
+  1057  c5a0 a200                       ldx #0          ; set X to zero for low size byte
+  1058  c5a2 60                         rts             ; size failed
+  1059                          
+  1060                                  ;               compute address of character in rom
+  1061                                  ;                 multiply character by 8, then add to $D000
+  1062  c5a3 68                 +       pla             ; restore character high bit and mode from stack
+  1063  c5a4 8502                       sta arg4        ; store in arg4 for mode
+  1064  c5a6 2901                       and #$01        ; just need one bit for high bit of character
+  1065  c5a8 a8                         tay             ; character high bit in Y
+  1066  c5a9 68                         pla             ; restore character low byte from stack
+  1067  c5aa 85fb                       sta arg1        ; store character into arg1
+  1068  c5ac 98                         tya             ; high byte moved to accumulator
+  1069                          
+  1070  c5ad 06fb                       asl arg1        ; *2
+  1071  c5af 2a                         rol
+  1072                          
+  1073  c5b0 26fb                       rol arg1        ; *2
+  1074  c5b2 2a                         rol
+  1075                          
+  1076  c5b3 26fb                       rol arg1        ; *2
+  1077  c5b5 2a                         rol
+  1078                          
+  1079  c5b6 18                         clc
+  1080  c5b7 69d0                       adc #$d0        ; character rom high byte
+  1081  c5b9 85fc                       sta arg2
+  1082                          
+  1083                                  ;               put character shape
+  1084  c5bb 78                         sei
+  1085  c5bc a501                       lda $01
+  1086  c5be 0901                       ora #$01        ; a000-bfff ROM
+  1087  c5c0 29f9                       and #$f9        ; character ROM and e000-ffff RAM
+  1088  c5c2 8501                       sta $01
+  1089  c5c4 a6fb                       ldx arg1
+  1090  c5c6 a4fc                       ldy arg2
+  1091  c5c8 a502                       lda arg4
+  1092  c5ca 20d5c5                     jsr setnvzcflags; set shape mode to put normal (overwrite)
+  1093  c5cd a90b                       lda #11
+  1094  c5cf 2000c0                     jsr start       ; put shape and restore memory map defaults
+  1095  c5d2 4ce5c0             	jmp banknorm    ; restore normal banking just in case
+  1096                          
+  1097                          setnvzcflags ; set NV----ZC flags based on accumulator, same positioning as CPU
+  1098                                       ; not ---BDI-- flags
+  1099                                       ;  effectively saving other registers and flags
+  1100  c5d5 08                         php             ; save current flags at what will be 102+X
+  1101  c5d6 48                         pha             ; save A register at what will be 101+X
+  1102  c5d7 8a                         txa
+  1103  c5d8 48                         pha             ; save X register at what will be 100+X
+  1104  c5d9 ba                         tsx             ; put SP into X
+  1105  c5da e8                         inx             ; adjust to point to last entry to stack
+  1106  c5db bd0101                     lda $101,x      ; retrieve desired flags
+  1107  c5de 29c3                       and #$c3        ; only what to change bits 7,6,1,0
+  1108  c5e0 9d0101                     sta $101,x
+  1109  c5e3 bd0201                     lda $102,x      ; retrieve original flags into accumulator
+  1110  c5e6 293c                       and #$3c        ; mask bits that we don't want to change
+  1111  c5e8 1d0101                     ora $101,x      ; combine with bits we want to change
+  1112  c5eb 9d0201                     sta $102,x      ; store flags where we will retrieve later
+  1113  c5ee 68                         pla
+  1114  c5ef aa                         tax             ; restore X register
+  1115  c5f0 68                         pla             ; restore A register
+  1116  c5f1 28                         plp             ; retrieve new flags
+  1117  c5f2 60                         rts
+  1118                          
+  1119                          case14  ;               change foreground/background color at located pixel (color in arg2, arg3 must be 1 for hires)
+  1120  c5f3 ad63cf                     lda x1lo
+  1121  c5f6 8d79cf                     sta case14_x2lo
+  1122  c5f9 ad64cf                     lda x1hi
+  1123  c5fc 8d7acf                     sta case14_x2hi
+  1124  c5ff ad65cf             	lda y1
+  1125  c602 8d7bcf             	sta case14_y2
+  1126  c605 a5fc                       lda arg2
+  1127  c607 8d76cf                     sta case14_arg2
+  1128  c60a a5fd                       lda arg3
+  1129  c60c 8d75cf                     sta case14_arg1
+  1130  c60f d001                       bne color_range
+  1131                          
+  1132  c611 60                 -      rts
+  1133                          color_range ; given x1,y1,x2,y2, color in arg2, set color for range of pixels (text:arg1=0, hires:arg1=1)
+  1134                                      ; note expects caller to validate x1,y1 in range
+  1135                                      ; but we'll validate that x2>=x1, y2>=y1 and in range for proper operation
+  1136                                      ; number of columns = ((x2 and $f8) - (x1 and $f8)) / 8 + 1
+  1137  c612 38                         sec             ; compute number of columns
+  1138  c613 ad63cf                     lda x1lo
+  1139  c616 29f8                       and #$f8
+  1140  c618 8d77cf                     sta case14_arg3
+  1141  c61b ad79cf                     lda case14_x2lo
+  1142  c61e 29f8                       and #$f8
+  1143  c620 ed77cf                     sbc case14_arg3
+  1144  c623 8d72cf                     sta case14_xslo
+  1145  c626 ad7acf                     lda case14_x2hi
+  1146  c629 ed64cf                     sbc x1hi
+  1147  c62c 8d73cf                     sta case14_xshi
+  1148  c62f 90e0                       bcc -           ; exit if out of range
+  1149  c631 4e73cf                     lsr case14_xshi ; xshi = xshi / 2
+  1150  c634 d0db                       bne -           ; exit if out of range
+  1151  c636 ad72cf                     lda case14_xslo
+  1152  c639 6a                         ror             ; = xshi remainder + xslo / 2
+  1153  c63a 4a                         lsr             ; /= 2 (/4 so far)
+  1154  c63b 4a                         lsr             ; /= 2 (/8)
+  1155  c63c 18                         clc
+  1156  c63d 6901                       adc #1          ; necessary to add one
+  1157  c63f c929                       cmp #41
+  1158  c641 9003                       bcc +
+  1159  c643 4cd8c6             	jmp ++          ; exit if out of range
+  1160  c646 8d72cf             +       sta case14_xslo ; store number of columns
+  1161                          
+  1162  c649 38                         sec             ; compute number of rows
+  1163  c64a ad65cf                     lda y1
+  1164  c64d 29f8                       and #$f8
+  1165  c64f 8d78cf                     sta case14_arg4
+  1166  c652 ad7bcf                     lda case14_y2
+  1167  c655 29f8                       and #$f8
+  1168  c657 ed78cf                     sbc case14_arg4
+  1169  c65a 907c                       bcc ++          ; exit if out of range
+  1170  c65c 4a                         lsr 
+  1171  c65d 4a                         lsr
+  1172  c65e 4a                         lsr
+  1173  c65f 18                         clc
+  1174  c660 6901                       adc #1
+  1175  c662 c91a                       cmp #26
+  1176  c664 b072                       bcs ++          ; exit if out of range
+  1177  c666 8d74cf                     sta case14_yslo ; store number of rows
+  1178                          
+  1179                                  ;               addr = gc + int(y1/8) * 40 + int(x1/8)
+  1180  c669 ad64cf                     lda x1hi
+  1181  c66c 4a                 	lsr
+  1182  c66d ad63cf             	lda x1lo
+  1183  c670 6a                         ror
+  1184  c671 4a                         lsr
+  1185  c672 4a                         lsr             ; int(x1/8)
+  1186  c673 85fe                       sta ptrl
+  1187  c675 ad14c0                     lda option_plotting
+  1188  c678 206ac5                     jsr hires_to_color
+  1189  c67b ae75cf                     ldx case14_arg1
+  1190  c67e d00c                       bne +
+  1191  c680 ad76cf                     lda case14_arg2 ; text color is just foreground
+  1192  c683 4a                         lsr
+  1193  c684 4a                         lsr
+  1194  c685 4a                         lsr
+  1195  c686 4a                         lsr
+  1196  c687 8d76cf                     sta case14_arg2
+  1197  c68a a9d8                       lda #$d8        ; text color screen (I/O bank)
+  1198  c68c 85ff               +       sta ptrh
+  1199  c68e a205                       ldx #5          ; prep *5
+  1200  c690 18                 -       clc
+  1201  c691 a5fe                       lda ptrl
+  1202  c693 6d78cf                     adc case14_arg4 ; int(y1/8)*8
+  1203  c696 85fe                       sta ptrl
+  1204  c698 9002                       bcc +
+  1205  c69a e6ff                       inc ptrh
+  1206  c69c ca                 +       dex
+  1207  c69d d0f1                       bne -
+  1208                          
+  1209  c69f ad75cf                     lda case14_arg1
+  1210  c6a2 f006                       beq +           ; no need to switch banks if text color ram
+  1211  c6a4 a501                       lda $01         ; save banks
+  1212  c6a6 48                         pha
+  1213  c6a7 20ddc0             	jsr bankram     ; ensure 64k ram bank
+  1214                          +        
+  1215                          
+  1216  c6aa a000               --      ldy #0
+  1217  c6ac ae72cf                     ldx case14_xslo
+  1218  c6af ad76cf                     lda case14_arg2
+  1219  c6b2 91fe               -       sta (ptrl),y
+  1220  c6b4 c8                         iny             ; advance to next column
+  1221  c6b5 ca                         dex
+  1222  c6b6 d0fa                       bne -           ; loop for columns
+  1223  c6b8 18                         clc             ; advance to next row
+  1224  c6b9 a5fe                       lda ptrl
+  1225  c6bb 6928                       adc #40
+  1226  c6bd 85fe                       sta ptrl
+  1227  c6bf 9002                       bcc +
+  1228  c6c1 e6ff                       inc ptrh 
+  1229  c6c3 ce74cf             +       dec case14_yslo
+  1230  c6c6 d0e2                       bne --          ; loop for rows
+  1231                          
+  1232  c6c8 ad75cf                     lda case14_arg1
+  1233  c6cb f00b                       beq ++          ; no need to switch banks if text color ram
+  1234  c6cd 68                         pla
+  1235  c6ce aa                         tax
+  1236  c6cf 2907                       and #$07        ; check if previous bank
+  1237  c6d1 8601                       stx $01         ; restore banks to before
+  1238  c6d3 c907                       cmp #$07        ; ...was normal
+  1239  c6d5 d001                       bne ++          ; nope, no cli
+  1240  c6d7 58                         cli
+  1241  c6d8 60                 ++      rts
+  1242                          
+  1243                          case15 ; copy text screen to graphics screen, and copy color too
+  1244                                  ; initialize variables
+  1245  c6d9 a900                       lda #0
+  1246  c6db 8d54cf                     sta copyx
+  1247  c6de 8d55cf                     sta copyx+1
+  1248  c6e1 8d56cf                     sta copyy
+  1249  c6e4 8d57cf                     sta copyptr
+  1250  c6e7 a904                       lda #$04 ; text ram high byte
+  1251  c6e9 8d58cf                     sta copyptr+1
+  1252  c6ec a9e8                       lda #<(40*25)
+  1253  c6ee 8d59cf                     sta copycount
+  1254  c6f1 a903                       lda #>(40*25)
+  1255  c6f3 8d5acf                     sta copycount+1
+  1256                          
+  1257                                  ; locate
+  1258  c6f6 ae54cf             --      ldx copyx
+  1259  c6f9 ac56cf                     ldy copyy
+  1260  c6fc ad55cf                     lda copyx+1
+  1261  c6ff 4a                         lsr             ; move x high bit into C
+  1262  c700 a907                       lda #7          ; locate op
+  1263  c702 2000c0                     jsr start
+  1264                          
+  1265                                  ; copy char from text to graphics screen
+  1266  c705 ad57cf                     lda copyptr
+  1267  c708 85fe                       sta ptrl
+  1268  c70a ad58cf                     lda copyptr+1
+  1269  c70d 85ff                       sta ptrh
+  1270  c70f a000                       ldy #0
+  1271  c711 b1fe                       lda (ptrl),y
+  1272  c713 aa                         tax
+  1273  c714 a90d                       lda #13         ; draw char
+  1274  c716 2000c0                     jsr start
+  1275                          
+  1276                                  ; locate
+  1277  c719 ae54cf                     ldx copyx
+  1278  c71c ac56cf                     ldy copyy
+  1279  c71f ad55cf                     lda copyx+1
+  1280  c722 4a                         lsr             ; move x high bit into C
+  1281  c723 a907                       lda #7          ; locate op
+  1282  c725 2000c0                     jsr start
+  1283                          
+  1284                                  ; plot color
+  1285  c728 ad57cf                     lda copyptr
+  1286  c72b 85fe                       sta ptrl
+  1287  c72d 18                         clc
+  1288  c72e ad58cf                     lda copyptr+1
+  1289  c731 69d4                       adc #>($d800-$0400)        ; translate text screen to color screen
+  1290  c733 85ff                       sta ptrh
+  1291  c735 a000                       ldy #0
+  1292  c737 b1fe                       lda (ptrl),y
+  1293  c739 0a                         asl
+  1294  c73a 0a                         asl
+  1295  c73b 0a                         asl
+  1296  c73c 0a                         asl
+  1297  c73d 85fb                       sta arg1
+  1298  c73f ad21d0                     lda $d021
+  1299  c742 290f                       and #$f
+  1300  c744 05fb                       ora arg1
+  1301  c746 aa                         tax
+  1302  c747 a90e                       lda #14
+  1303  c749 a001               	ldy #1 ; graphics screen
+  1304  c74b 2000c0                     jsr start
+  1305                          
+  1306  c74e 18                         clc
+  1307  c74f ad54cf                     lda copyx
+  1308  c752 6908                       adc #8
+  1309  c754 8d54cf                     sta copyx
+  1310  c757 9003                       bcc +
+  1311  c759 ee55cf                     inc copyx+1
+  1312  c75c ad55cf             +       lda copyx+1
+  1313  c75f f018                       beq +
+  1314  c761 ad54cf                     lda copyx
+  1315  c764 c940                       cmp #<320
+  1316  c766 9011                       bcc +
+  1317                          
+  1318  c768 a900                       lda #0
+  1319  c76a 8d54cf                     sta copyx
+  1320  c76d 8d55cf                     sta copyx+1
+  1321  c770 18                         clc
+  1322  c771 ad56cf                     lda copyy
+  1323  c774 6908                       adc #8
+  1324  c776 8d56cf                     sta copyy
+  1325                          
+  1326  c779 ee57cf             +       inc copyptr
+  1327  c77c d003                       bne +
+  1328  c77e ee58cf                     inc copyptr+1
+  1329                          
+  1330  c781 ac59cf             +       ldy copycount
+  1331  c784 d003                       bne +
+  1332  c786 ce5acf                     dec copycount+1
+  1333  c789 88                 +       dey
+  1334  c78a 8c59cf                     sty copycount
+  1335  c78d 98                         tya
+  1336  c78e 0d5acf                     ora copycount+1
+  1337  c791 f003                       beq +
+  1338  c793 4cf6c6                     jmp --
+  1339  c796 60                 +       rts
+  1340                          
+  1341                          ; this is a high performance multiplier, doing just shifts and adds, loops only 8 times
+  1342                          multxy ; multiplies x*y, 16-bit result in xy (y is high byte), using stack for temporaries, code is relocatable
+  1343  c797 d8                         cld             ; just in case
+  1344  c798 48                         pha             ; A saved
+  1345  c799 a900                       lda #$00
+  1346  c79b 48                         pha             ; result hi     @ $0105+SP
+  1347  c79c 48                         pha             ; result lo     @ $0104+SP
+  1348  c79d 48                         pha             ; multiplier hi @ $0103+SP
+  1349  c79e 98                         tya             ; y is multiplier lo
+  1350  c79f 48                         pha             ; multiplier lo @ $0102+SP
+  1351  c7a0 8a                         txa             ; retrieve value x
+  1352  c7a1 48                         pha             ; value x       @ $0101+SP
+  1353  c7a2 ba                         tsx             ; x = SP stack pointer
+  1354                          
+  1355  c7a3 a008                       ldy #$08        ; nbits = 8
+  1356  c7a5 5e0101             -       lsr $0101,x     ; get next bit of value x
+  1357  c7a8 9013                       bcc +           ; if clear, skip add
+  1358                          
+  1359  c7aa 18                         clc             ; bit set, so result += multiplier
+  1360  c7ab bd0401                     lda $0104,x     ; load result lo
+  1361  c7ae 7d0201                     adc $0102,x     ; add mult lo
+  1362  c7b1 9d0401                     sta $0104,x     ; store result lo
+  1363  c7b4 bd0501                     lda $0105,x     ; load result hi
+  1364  c7b7 7d0301                     adc $0103,x     ; add with carry mult hi
+  1365  c7ba 9d0501                     sta $0105,x     ; store result hi
+  1366                          
+  1367  c7bd 1e0201             +       asl $0102,x     ; multiplier *= 2
+  1368  c7c0 3e0301                     rol $0103,x
+  1369                          
+  1370  c7c3 88                         dey             ; --nbits
+  1371  c7c4 d0df                       bne -           ; branch loop if nbits != 0
+  1372                          
+  1373                                                  ; give back stack space
+  1374  c7c6 68                         pla             ; $0101+SP
+  1375  c7c7 68                         pla             ; $0102+SP
+  1376  c7c8 68                         pla             ; $0103+SP
+  1377  c7c9 68                         pla             ; $0104+SP
+  1378  c7ca aa                         tax             ; X = result lo
+  1379  c7cb 68                         pla             ; $0105+SP
+  1380  c7cc a8                         tay             ; Y = result hi
+  1381  c7cd 68                         pla             ; A restored
+  1382                          
+  1383  c7ce 60                         rts
+  1384                          
+  1385                          list_tokens
+  1386  c7cf 240f                       bit $0F   ; quoted?
+  1387  c7d1 3008                       bmi +     ; if yes, handle normally in ROM
+  1388  c7d3 c9cc                       cmp #$cc  ; compare to our first token value
+  1389  c7d5 9004                       bcc +     ; skip token if less than ours
+  1390  c7d7 c9d5                       cmp #$d5  ; compare past our last token value
+  1391  c7d9 9005                       bcc ++    ; branch if our token
+  1392  c7db 0900               +       ora #$00  ; reset Z flag for zero value
+  1393  c7dd 4c1aa7                     jmp $a71a ; process other token standard QPLOP
+  1394  c7e0 8449               ++      sty $49   ; save index
+  1395  c7e2 a000                       ldy #0
+  1396  c7e4 38                         sec
+  1397  c7e5 e9cc                       sbc #$cc
+  1398  c7e7 aa                         tax
+  1399  c7e8 f00b                       beq +
+  1400  c7ea b97dcf             -       lda tokens1,y
+  1401  c7ed c8                         iny
+  1402  c7ee 0900                       ora #0
+  1403  c7f0 10f8                       bpl -
+  1404  c7f2 ca                         dex
+  1405  c7f3 d0f5                       bne -
+  1406                          -
+  1407  c7f5 b97dcf             +       lda tokens1,y
+  1408  c7f8 3007                       bmi +
+  1409  c7fa 2047ab                     jsr listchr
+  1410  c7fd c8                         iny
+  1411  c7fe 4cf5c7                     jmp -
+  1412  c801 297f               +       and #$7f
+  1413  c803 2047ab                     jsr listchr ; output character
+  1414  c806 a449                       ldy $49   ; restore index
+  1415  c808 4c00a7                     jmp $a700 ; retrieve next token
+  1416                          
+  1417                          hires_crunch ; will be copy/patch of C64 BASIC crunch from A57C-A612
+  1418  c80b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1419  c81b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1420  c82b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1421  c83b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1422  c84b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1423  c85b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1424  c86b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1425  c87b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1426  c88b 0000000000000000...!byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  1427  c89b 00000000000000     !byte 0,0,0,0,0,0,0
+  1428                          
+  1429                          patch_table
+  1430  c8a2 37ddc8             !byte 0x37, <crunch_start, >crunch_start
+  1431  c8a5 4000c9             !byte 0x40, <crunch_sbc, >crunch_sbc
+  1432  c8a8 7ee9c8             !byte 0x7e, <crunch_get, >crunch_get
+  1433  c8ab 83f0c8             !byte 0x83, <crunch_next, >crunch_next
+  1434  c8ae 00                 !byte 0
+  1435                          
+  1436                          crunch_patch
+  1437  c8af a000                       ldy #0
+  1438  c8b1 b97ca5             -       lda $a57c,y
+  1439  c8b4 990bc8                     sta hires_crunch,y
+  1440  c8b7 c8                         iny
+  1441  c8b8 c097                       cpy #$97
+  1442  c8ba d0f5                       bne -
+  1443                          
+  1444  c8bc a000                       ldy #0
+  1445  c8be b9a2c8             -       lda patch_table,y
+  1446  c8c1 f019                       beq +
+  1447  c8c3 aa                         tax
+  1448  c8c4 a920                       lda #$20 ; JSR opcode
+  1449  c8c6 9d0bc8                     sta hires_crunch,x
+  1450  c8c9 e8                         inx
+  1451  c8ca c8                         iny
+  1452  c8cb b9a2c8                     lda patch_table,y
+  1453  c8ce 9d0bc8                     sta hires_crunch,x
+  1454  c8d1 e8                         inx
+  1455  c8d2 c8                         iny
+  1456  c8d3 b9a2c8                     lda patch_table,y
+  1457  c8d6 9d0bc8                     sta hires_crunch,x
+  1458  c8d9 c8                         iny
+  1459  c8da d0e2                       bne -
+  1460  c8dc 60                 +       rts
+  1461                          
+  1462                          crunch_start:
+  1463  c8dd a99e                       lda #<$A09E	; point to original BASIC tokens, low byte
+  1464  c8df 85fe                       sta ptrl
+  1465  c8e1 a9a0                       lda #>$A09E	; point to original BASIC tokens, high byte
+  1466  c8e3 85ff                       sta ptrh
+  1467  c8e5 867a                       STX $7A
+  1468  c8e7 ca                         DEX
+  1469  c8e8 60                         rts
+  1470                          crunch_get:		; retrieves character from token table, looking back one index
+  1471  c8e9 88                         dey
+  1472  c8ea b1fe                       lda (ptrl),y
+  1473  c8ec c8                         iny
+  1474  c8ed 0900                       ora #$00 ; restore N based on A (caller will BPL next)
+  1475  c8ef 60                         rts
+  1476                          crunch_next:
+  1477  c8f0 c0ff                       cpy #$FF ; are we at the end of the last token in the first table?
+  1478  c8f2 d009                       bne + ; no
+  1479  c8f4 a97d                       lda #<tokens1 ; update low pointer to next table
+  1480  c8f6 85fe                       sta ptrl
+  1481  c8f8 a9cf                       lda #>tokens1 ; update high pointer to next table
+  1482  c8fa 85ff                       sta ptrh
+  1483  c8fc c8                         iny ; reset index to zero, start of second token table
+  1484  c8fd b1fe               +       lda (ptrl),y        
+  1485  c8ff 60                         rts
+  1486                          crunch_sbc:
+  1487  c900 f1fe                       sbc (ptrl),y
+  1488  c902 60                         rts
+  1489                          
+  1490                          get_coord ; retrieve x,y coordinates from command into a(xlo), x(y), y(xhi)
+  1491  c903 20ebb7                     jsr getnum ; (16-bit [$14,$15] comma 8-bit [x])
+  1492                          chk_coord
+  1493  c906 e0c8                       cpx #200
+  1494  c908 b00e                       bcs ++
+  1495  c90a a514                       lda $14
+  1496  c90c a415                       ldy $15
+  1497  c90e f00b                       beq +
+  1498  c910 c002                       cpy #2
+  1499  c912 b004                       bcs ++
+  1500  c914 c940                       cmp #<320
+  1501  c916 9003                       bcc +
+  1502  c918 4ce1c9             ++      jmp .illegal_quantity
+  1503  c91b 60                 +       rts
+  1504                          
+  1505                          chktoken:               ; re-check last token parsed
+  1506  c91c a000                       ldy #0
+  1507  c91e b17a                       lda ($7A),y
+  1508  c920 38                         sec
+  1509  c921 f002                       beq + ; continue
+  1510  c923 c93a                       cmp #$3a ; colon
+  1511  c925 60                 +       rts
+  1512                          
+  1513                          execute:
+  1514  c926 207300                     jsr $0073 ; get next token (wedge)
+  1515  c929 f02a                       beq loop ; end of line or colon
+  1516  c92b 9028                       bcc loop ; numeric
+  1517                          
+  1518  c92d c9cc                       cmp #$cc ; HIRES?
+  1519  c92f d003                       bne +
+  1520  c931 4c03ca                     jmp hires
+  1521  c934 c9cd               +	cmp #$cd ; COLOR?
+  1522  c936 d003                       bne +
+  1523  c938 4c34cc                     jmp color
+  1524  c93b c9ce               +       cmp #$ce ; PLOT?
+  1525  c93d f021               	beq plot
+  1526  c93f c9cf               +       cmp #$cf ; SHAPE?
+  1527  c941 d003                       bne +
+  1528  c943 4c3acd                     jmp shape        
+  1529  c946 c9d2               +       cmp #$d2 ; PATTERN?
+  1530  c948 d003                       bne +
+  1531  c94a 4c5acd                     jmp shape_get_put ; syntax is similar
+  1532  c94d c9d4               +       cmp #$d4 ; RECT?
+  1533  c94f d003                       bne +
+  1534  c951 4cc0cb                     jmp rect
+  1535  c954 38                 +       sec ; non-numeric
+  1536                                  ; not one of ours, continue with ROM processing
+  1537  c955 4ce7a7             loop    jmp $a7e7 ; handle token
+  1538                          
+  1539  c958 201cc9             reloop  jsr chktoken ; verify next token is end of statement
+  1540  c95b f0f8                       beq loop        
+  1541  c95d 4c08af                     jmp syntax_error ; syntax error
+  1542                          
+  1543  c960 20f9cd             plot	jsr lookahead
+  1544  c963 c9cd                       cmp #$CD        ; COLOR
+  1545  c965 d038                       bne ++
+  1546  c967 207300                     jsr $0073       ; consume token
+  1547  c96a a900                       lda #0
+  1548  c96c 8d16c0                     sta option_apply_color
+  1549  c96f 20f9cd                     jsr lookahead
+  1550  c972 d006                       bne +
+  1551  c974 207300                     jsr $0073       ; consume token (end of line or colon)
+  1552  c977 4c58c9                     jmp reloop
+  1553  c97a 2002cc             +       jsr commaorbyte
+  1554  c97d 900c                       bcc +
+  1555  c97f e010                       cpx #16
+  1556  c981 b05e                       bcs .illegal_quantity
+  1557  c983 8e61cf                     stx hiresfg
+  1558  c986 a940                       lda #$40
+  1559  c988 8d16c0                     sta option_apply_color
+  1560  c98b 2002cc             +       jsr commaorbyte
+  1561  c98e 900c                       bcc +
+  1562  c990 e010                       cpx #16
+  1563  c992 b04d                       bcs .illegal_quantity
+  1564  c994 8e62cf                     stx hiresbg
+  1565  c997 a940                       lda #$40
+  1566  c999 8d16c0                     sta option_apply_color
+  1567  c99c 4c58c9             +       jmp reloop
+  1568                          
+  1569  c99f 209bb7             ++      jsr getbytc     ; pixel state 0=clear, 1=set
+  1570  c9a2 e002                       cpx #2
+  1571  c9a4 b03b                       bcs .illegal_quantity
+  1572  c9a6 8e5ccf                     stx plotcolor
+  1573  c9a9 c9a4                       cmp #$A4        ; TO token
+  1574  c9ab f037                       beq plotto
+  1575  c9ad c940                       cmp #$40        ; @
+  1576  c9af d009               	bne +
+  1577  c9b1 20ffae             	jsr chkany
+  1578  c9b4 2003c9             	jsr get_coord
+  1579  c9b7 4cc0c9             	jmp plot_coord1
+  1580  c9ba 20fdae             +       jsr chkcom      ; comma separates values
+  1581                                  ; first coordinate before TO is locate
+  1582  c9bd 201bce             	jsr plotstring		; check if is plot string, if is, does not return
+  1583                          	; otherwise has called equivalent to get_coord
+  1584                          	;jsr get_coord
+  1585                          plot_coord1
+  1586  c9c0 8d63cf                     sta x1lo                ; locate
+  1587  c9c3 8c64cf                     sty x1hi
+  1588  c9c6 8e65cf                     stx y1
+  1589  c9c9 201cc9                     jsr chktoken
+  1590  c9cc d00c                       bne + 
+  1591  c9ce ad63cf                     lda x1lo
+  1592  c9d1 ac64cf                     ldy x1hi
+  1593  c9d4 ae65cf                     ldx y1
+  1594  c9d7 4ceac9                     jmp ++ ; drawing from/to same coord with draw pixel
+  1595  c9da c9a4               +       cmp #$A4
+  1596  c9dc f006                       beq plotto
+  1597  c9de 4c08af                     jmp syntax_error
+  1598                          
+  1599                          .illegal_quantity
+  1600  c9e1 4c48b2                    jmp illegal_quantity ; invalid quantity error
+  1601                          
+  1602                          plotto
+  1603  c9e4 207300                     jsr $0073               ; get next token
+  1604  c9e7 2003c9                     jsr get_coord
+  1605  c9ea 85fc               ++      sta arg2                ; setup args for drawto
+  1606  c9ec 86fd                       stx arg3
+  1607  c9ee 98                         tya
+  1608  c9ef ae5ccf                     ldx plotcolor
+  1609  c9f2 d002                       bne +
+  1610  c9f4 0902                       ora #2 ; pixel mode clear
+  1611  c9f6 8502               +       sta arg4
+  1612  c9f8 20eac1                     jsr case8
+  1613  c9fb 201cc9                     jsr chktoken
+  1614  c9fe d0e4                       bne plotto
+  1615  ca00 4c58c9                     jmp reloop
+  1616                          
+  1617  ca03 209bb7             hires   jsr getbytc
+  1618  ca06 c900                       cmp #0  ; end of line
+  1619  ca08 d003                       bne +
+  1620  ca0a 4cd7ca                     jmp hiresX
+  1621  ca0d c93a               +       cmp #':' ; colon
+  1622  ca0f d003                       bne +
+  1623  ca11 4cd7ca                     jmp hiresX
+  1624                          
+  1625  ca14 c9d3               +       cmp #$d3 ; swap
+  1626  ca16 d007                       bne +
+  1627  ca18 a900                       lda #0
+  1628  ca1a 8502               -       sta arg4
+  1629  ca1c 4c58ca                     jmp hires_swap
+  1630                          
+  1631  ca1f c9a1               +       cmp #$a1 ; get
+  1632  ca21 d004                       bne +
+  1633  ca23 a940                       lda #$40 ; get option for swap
+  1634  ca25 d0f3                       bne -
+  1635                          
+  1636  ca27 c9d0               +       cmp #$d0 ; put
+  1637  ca29 d004                       bne +
+  1638  ca2b a980                       lda #$80 ; put option for swap
+  1639  ca2d d0eb                       bne -
+  1640                          
+  1641  ca2f c9ce               +       cmp #$ce ; plot
+  1642  ca31 f011                       beq hires_plot
+  1643                          
+  1644  ca33 c99c                       cmp #$9c	; CLR token
+  1645  ca35 d003                       bne +
+  1646  ca37 4cd7ca                     jmp hiresX
+  1647                          
+  1648  ca3a c92c               +       cmp #','
+  1649  ca3c d003                       bne +
+  1650  ca3e 4c09cb                     jmp hires_addr
+  1651                          
+  1652  ca41 4c08af             +       jmp syntax_error
+  1653                          
+  1654                          hires_plot
+  1655  ca44 207300                     jsr $0073
+  1656  ca47 f003                       beq +
+  1657  ca49 4c08af                     jmp syntax_error
+  1658  ca4c e000               +       cpx #0
+  1659  ca4e d091                       bne .illegal_quantity
+  1660  ca50 a90f                       lda #15 ; text to graphics
+  1661  ca52 2000c0                     jsr start
+  1662  ca55 4c58c9                     jmp reloop
+  1663                          
+  1664                          hires_swap
+  1665  ca58 207300                     jsr $0073
+  1666  ca5b f003                       beq +
+  1667  ca5d 4c08af                     jmp syntax_error
+  1668  ca60 e001               +       cpx #1
+  1669  ca62 f003                       beq do_swap
+  1670  ca64 4c48b2                     jmp illegal_quantity
+  1671                          
+  1672                          ; 0 poke 56,8*16+12:clr
+  1673                          ; 10 hires 1,10*4096,(8*16+12)*256 clr plot
+  1674                          ; 15 hires 1,14*4096 clr
+  1675                          ; 20 plot 1 @ 0,0 to 319,199
+  1676                          ; 30 hires 1 put
+  1677                          ; 40 plot 1 @ 0,199 to 319,0
+  1678                          ; 50 hires 1 swap
+  1679                          ; 60 for i=1 to 100:next
+  1680                          ; 70 goto 50
+  1681                          do_swap
+  1682  ca67 a502                       lda arg4
+  1683  ca69 d026                       bne +                   ; GET or PUT, so just copy bytes, don't switch screens
+  1684  ca6b ad15c0                     lda option_alternate    ; check if alt screen is physical hires screen
+  1685  ca6e 20a2ca                     jsr chk_phys_screen     ; check if hires bitmap and color screen valid and in same 16k segment
+  1686  ca71 d01e                       bne +                   ; nope -- bitmap/color not in same 16K page
+  1687                          
+  1688                                  ; swap plotting/alternate, and activate new screen
+  1689  ca73 ac15c0                     ldy option_alternate
+  1690  ca76 ad14c0                     lda option_plotting
+  1691  ca79 8d15c0                     sta option_alternate
+  1692  ca7c 8c14c0                     sty option_plotting
+  1693  ca7f ad11d0             -       lda scroly
+  1694  ca82 10fb                       bpl -                   ; wait for scan line out of visible area
+  1695  ca84 a901                       lda #1
+  1696  ca86 2000c0                     jsr start
+  1697  ca89 a902                       lda #2
+  1698  ca8b 2000c0                     jsr start
+  1699  ca8e 4c58c9                     jmp reloop
+  1700                          
+  1701  ca91 a502               +       lda arg4
+  1702  ca93 48                         pha
+  1703  ca94 a90c                       lda #12 ; swap graphics screens
+  1704  ca96 a200                       ldx #0
+  1705  ca98 ac15c0                     ldy option_alternate
+  1706  ca9b 28                         plp
+  1707  ca9c 2000c0                     jsr start
+  1708  ca9f 4c58c9                     jmp reloop
+  1709                          
+  1710                          chk_phys_screen
+  1711  caa2 48                         pha
+  1712  caa3 8a                         txa
+  1713  caa4 48                         pha
+  1714  caa5 98                         tya
+  1715  caa6 48                         pha
+  1716  caa7 ba                         tsx
+  1717  caa8 a901                       lda #1
+  1718  caaa 8d7ccf                     sta chk_phys_temp
+  1719  caad bd0301                     lda $103,x              ; retrieve A from stack
+  1720  cab0 a8                         tay                     ; save copy in Y
+  1721  cab1 f01b                       beq +                   ; nope - zero not allowed
+  1722  cab3 291f                       and #$1F
+  1723  cab5 d017                       bne +                   ; nope - offset not right
+  1724  cab7 98                         tya
+  1725  cab8 c980                       cmp #$80
+  1726  caba f012                       beq +                   ; nope - $8000 not allowed
+  1727  cabc 29c0                       and #$C0                ; mask to 16K page
+  1728  cabe 8d7ccf                     sta chk_phys_temp
+  1729  cac1 98                         tya
+  1730  cac2 206ac5                     jsr hires_to_color
+  1731  cac5 29c0                       and #$C0
+  1732  cac7 38                         sec
+  1733  cac8 ed7ccf                     sbc chk_phys_temp
+  1734  cacb 8d7ccf                     sta chk_phys_temp
+  1735  cace 68                 +       pla
+  1736  cacf a8                         tay
+  1737  cad0 68                         pla
+  1738  cad1 aa                         tax
+  1739  cad2 68                         pla
+  1740  cad3 ad7ccf                     lda chk_phys_temp       ; discard A, set Z for return value
+  1741  cad6 60                         rts
+  1742                          
+  1743                          hiresX
+  1744  cad7 e000                       cpx #0 ; HIRES 0
+  1745  cad9 d00d                       bne +
+  1746  cadb ad11d0             -       lda scroly
+  1747  cade 10fb                       bpl -           ; make sure raster is in non-drawable part of screen
+  1748  cae0 a905                       lda #5
+  1749  cae2 2000c0                     jsr start
+  1750  cae5 4c58c9                     jmp reloop
+  1751                          
+  1752  cae8 e001               +       cpx #1 ; HIRES 1
+  1753  caea f003                       beq +
+  1754  caec 4ce1c9                     jmp .illegal_quantity
+  1755  caef 201cc9             +	jsr chktoken
+  1756  caf2 f012               	beq +
+  1757  caf4 a99c               	lda #$9c        ; CLR token
+  1758  caf6 20ffae             	jsr chkany      ; check for token in A and advance
+  1759                          
+  1760                                  ; clear hires screen first
+  1761  caf9 a903                       lda #3
+  1762  cafb 202ccd                     jsr gethirescolor ; in X without changing A
+  1763  cafe 2000c0                     jsr start       ; set graphics color ram
+  1764  cb01 a904                       lda #4
+  1765  cb03 2000c0                     jsr start       ; clear graphics screen
+  1766                          
+  1767  cb06 4ca3cb             +       jmp switch_hires
+  1768                          
+  1769                          ; 100 poke 56,32:clr
+  1770                          ; 105 goto 130
+  1771                          ; 110 hires 1,8192,1024 clr
+  1772                          ; 120 plot 1,0,0 to 319,199
+  1773                          ; 130 hires 1,4*4096,6*4096 clr
+  1774                          ; 140 plot 1,160,0 to 160,199
+  1775                          ; 150 hires 1,10*4096,8*4096 clr
+  1776                          ; 160 plot 1,319,0 to 0,199
+  1777                          ; 165 stop
+  1778                          ; 170 hires 1,14*4096 clr
+  1779                          ; 180 plot 1,319,100 to 0,100
+  1780                          ; 190 for i=0 to 1 step 0
+  1781                          ; 200 hires 1,2*4096
+  1782                          ; 210 hires 1,4*4096
+  1783                          ; 220 hires 1,10*4096
+  1784                          ; 230 hires 1,14*4096
+  1785                          ; 240 get k$:i=len(k$)
+  1786                          ; 250 next
+  1787                          ; 260 hires 0:print chr$(147);
+  1788                          hires_addr
+  1789  cb09 207300                     jsr $0073 ; skip comma
+  1790  cb0c 208aad                     jsr frmnum
+  1791  cb0f 20f7b7                     jsr getadr
+  1792  cb12 c000                       cpy #0
+  1793  cb14 f003                       beq +
+  1794  cb16 4c48b2             -       jmp illegal_quantity
+  1795  cb19 cd14c0             +       cmp option_plotting
+  1796  cb1c f009                       beq +
+  1797  cb1e ac14c0                     ldy option_plotting
+  1798  cb21 8c15c0                     sty option_alternate
+  1799  cb24 8d14c0                     sta option_plotting
+  1800  cb27 201cc9             +       jsr chktoken
+  1801  cb2a c92c                       cmp #','
+  1802  cb2c d01e                       bne +
+  1803  cb2e 20fdae                     jsr chkcom
+  1804  cb31 208aad                     jsr frmnum
+  1805  cb34 20f7b7                     jsr getadr
+  1806  cb37 c000                       cpy #0
+  1807  cb39 d0db                       bne -
+  1808  cb3b a8                         tay             ; save color high address
+  1809  cb3c ad14c0                     lda option_plotting
+  1810  cb3f 4a                         lsr             ; divide by 32 to get value 0..7
+  1811  cb40 4a                         lsr
+  1812  cb41 4a                         lsr
+  1813  cb42 4a                         lsr
+  1814  cb43 4a                         lsr
+  1815  cb44 aa                         tax             ; x has # of hires screen (0..7)
+  1816  cb45 98                         tya             ; restore color high address
+  1817  cb46 9d17c0                     sta option_colors_0,x
+  1818  cb49 201cc9                     jsr chktoken
+  1819  cb4c c9d3               +       cmp #$D3        ; SWAP
+  1820  cb4e d035                       bne +
+  1821  cb50 207300                     jsr $0073       ; consume SWAP
+  1822  cb53 208aad                     jsr frmnum
+  1823  cb56 20f7b7                     jsr getadr
+  1824  cb59 c000                       cpy #0
+  1825  cb5b d0b9                       bne -
+  1826  cb5d 8d15c0                     sta option_alternate
+  1827  cb60 201cc9                     jsr chktoken
+  1828  cb63 c92c                       cmp #','
+  1829  cb65 d01b                       bne +++
+  1830  cb67 20fdae                     jsr chkcom
+  1831  cb6a 208aad                     jsr frmnum
+  1832  cb6d 20f7b7                     jsr getadr
+  1833  cb70 c000                       cpy #0
+  1834  cb72 d0a2                       bne -
+  1835  cb74 a8                         tay             ; save color high address
+  1836  cb75 ad15c0                     lda option_alternate
+  1837  cb78 4a                         lsr             ; divide by 32 to get value 0..7
+  1838  cb79 4a                         lsr
+  1839  cb7a 4a                         lsr
+  1840  cb7b 4a                         lsr
+  1841  cb7c 4a                         lsr
+  1842  cb7d aa                         tax             ; x has # of hires screen (0..7)
+  1843  cb7e 98                         tya             ; restore color high address
+  1844  cb7f 9d17c0                     sta option_colors_0,x
+  1845  cb82 4c67ca             +++     jmp do_swap
+  1846  cb85 c99c               +       cmp #$9C        ; CLR
+  1847  cb87 d010                       bne +
+  1848  cb89 a903                       lda #3
+  1849  cb8b 202ccd                     jsr gethirescolor ; in X without changing A
+  1850  cb8e 2000c0                     jsr start
+  1851  cb91 a904                       lda #4
+  1852  cb93 2000c0                     jsr start
+  1853  cb96 207300                     jsr $0073       ; consume token
+  1854  cb99 c9ce               +       cmp #$CE        ; PLOT
+  1855  cb9b d006                       bne +
+  1856  cb9d 207300                     jsr $0073       ; consume token
+  1857  cba0 4cbdcb                     jmp ++
+  1858                          +      
+  1859                          switch_hires
+  1860  cba3 ad14c0                     lda option_plotting
+  1861  cba6 20a2ca                     jsr chk_phys_screen
+  1862  cba9 f003                       beq +
+  1863  cbab 4c48b2                     jmp illegal_quantity
+  1864                          +
+  1865  cbae ad11d0             -       lda scroly
+  1866  cbb1 10fb                       bpl -           ; wait for raster off screen before switch screen
+  1867  cbb3 a901                       lda #1
+  1868  cbb5 2000c0                     jsr start
+  1869  cbb8 a902                       lda #2
+  1870  cbba 2000c0                     jsr start        
+  1871  cbbd 4c58c9             ++      jmp reloop
+  1872                          
+  1873                          
+  1874                          ; 10 hires 1 clr
+  1875                          ; 20 x1%=rnd(1)*319
+  1876                          ; 30 y1%=rnd(1)*199
+  1877                          ; 40 x2%=rnd(1)*(320-x1%)
+  1878                          ; 50 y2%=rnd(1)*(200-y1%)
+  1879                          ; 60 rect rnd(1)*2,x1%,y1% to x2%,y2%
+  1880                          ; 70 goto 20
+  1881  cbc0 209bb7             rect    jsr getbytc
+  1882  cbc3 8efbcb                     stx rect_pixel
+  1883  cbc6 201cc9                     jsr chktoken
+  1884  cbc9 c92c                       cmp #','
+  1885  cbcb f002                       beq +
+  1886  cbcd a940                       lda #'@'
+  1887  cbcf 20ffae             +       jsr chkany
+  1888  cbd2 2003c9                     jsr get_coord
+  1889  cbd5 8dfccb                     sta rect_x1lo
+  1890  cbd8 8cfdcb                     sty rect_x1hi
+  1891  cbdb 8efecb                     stx rect_y1
+  1892  cbde a9a4                       lda #$A4
+  1893  cbe0 20ffae                     jsr chkany
+  1894  cbe3 2003c9                     jsr get_coord
+  1895  cbe6 8dffcb                     sta rect_x2lo
+  1896  cbe9 8c00cc                     sty rect_x2hi
+  1897  cbec 8e01cc                     stx rect_y2
+  1898                          
+  1899  cbef 20ddc0                     jsr bankram
+  1900  cbf2 2061d3                     jsr draw_rect
+  1901  cbf5 20e5c0                     jsr banknorm
+  1902                          
+  1903  cbf8 4c58c9                     jmp reloop        
+  1904                          
+  1905  cbfb 00                 rect_pixel !byte 0
+  1906  cbfc 00                 rect_x1lo !byte 0
+  1907  cbfd 00                 rect_x1hi !byte 0
+  1908  cbfe 00                 rect_y1 !byte 0
+  1909  cbff 00                 rect_x2lo !byte 0
+  1910  cc00 00                 rect_x2hi !byte 0
+  1911  cc01 00                 rect_y2 !byte 0
+  1912                          
+  1913                          commaorbyte
+  1914  cc02 20f9cd                     jsr lookahead ; (past comma)
+  1915  cc05 c900                       cmp #$00 ; end of line
+  1916  cc07 d002                       bne +
+  1917  cc09 18                 -       clc
+  1918  cc0a 60                         rts
+  1919  cc0b c93a               +       cmp #$3a ; colon
+  1920  cc0d f0fa                       beq -
+  1921  cc0f c940                       cmp #$40 ; @
+  1922  cc11 f0f6                       beq -
+  1923  cc13 c92c                       cmp #$2c ; comma
+  1924  cc15 d00e                       bne +
+  1925  cc17 207300                     jsr $0073 ; get token
+  1926  cc1a d005                       bne ++
+  1927  cc1c 68                 -       pla
+  1928  cc1d 68                         pla
+  1929  cc1e 4c08af                     jmp syntax_error
+  1930  cc21 18                 ++      clc
+  1931  cc22 a200                       ldx #0
+  1932  cc24 60                         rts
+  1933  cc25 209bb7             +       jsr getbytc
+  1934  cc28 f008                       beq +
+  1935  cc2a c92c                       cmp #$2c ; comma
+  1936  cc2c f004                       beq +
+  1937  cc2e c940                       cmp #$40 ; @
+  1938  cc30 d0ea                       bne -
+  1939  cc32 38                 +       sec
+  1940  cc33 60                         rts
+  1941                          
+  1942                          color
+  1943  cc34 2002cc                     jsr commaorbyte
+  1944  cc37 900e                       bcc ++
+  1945  cc39 c900                       cmp #$00
+  1946  cc3b d003                       bne +
+  1947  cc3d 4c08af                     jmp syntax_error; no arguments
+  1948  cc40 e002               +       cpx #2 ; looking for 0 (text) or 1 (hires)
+  1949  cc42 9003                       bcc ++
+  1950  cc44 4ce1c9             -       jmp .illegal_quantity
+  1951  cc47 86fc               ++      stx arg2        ; graphics mode (0 or 1)
+  1952  cc49 a900                       lda #0
+  1953  cc4b 85fb                       sta arg1        ; whether to apply color to screen
+  1954  cc4d ad61cf                     lda hiresfg
+  1955  cc50 85fd                       sta arg3        ; save in case we need to restore
+  1956  cc52 ad62cf                     lda hiresbg
+  1957  cc55 8502                       sta arg4        ; save in case we need to restore
+  1958  cc57 2002cc                     jsr commaorbyte
+  1959  cc5a 9009                       bcc +
+  1960  cc5c e010                       cpx #16
+  1961  cc5e b0e4                       bcs -
+  1962  cc60 8e61cf                     stx hiresfg
+  1963  cc63 e6fb                       inc arg1        ; set flag to apply fg color to screen
+  1964  cc65 c940               +       cmp #$40 ; @
+  1965  cc67 f028                       beq ++
+  1966  cc69 2002cc             +       jsr commaorbyte
+  1967  cc6c 900f                       bcc +
+  1968  cc6e e010                       cpx #16
+  1969  cc70 b0d2                       bcs -
+  1970  cc72 8e62cf                     stx hiresbg
+  1971  cc75 48                         pha
+  1972  cc76 a5fb                       lda arg1
+  1973  cc78 0902                       ora #$02        ; set flag to apply bg color to screen
+  1974  cc7a 85fb                       sta arg1
+  1975  cc7c 68                         pla
+  1976  cc7d c940               +       cmp #$40 ; @
+  1977  cc7f f010                       beq ++
+  1978  cc81 2002cc                     jsr commaorbyte
+  1979  cc84 9007                       bcc +
+  1980  cc86 e010                       cpx #16
+  1981  cc88 b0ba                       bcs -
+  1982  cc8a 8e20d0                     stx $d020 ; border
+  1983  cc8d c940               +       cmp #$40
+  1984  cc8f d067                       bne .chkstor
+  1985  cc91 207300             ++      jsr $0073
+  1986  cc94 2003c9                     jsr get_coord
+  1987  cc97 8d63cf                     sta x1lo
+  1988  cc9a 8c64cf                     sty x1hi
+  1989  cc9d 8e65cf                     stx y1
+  1990  cca0 8d79cf                     sta case14_x2lo
+  1991  cca3 8c7acf                     sty case14_x2hi
+  1992  cca6 8e7bcf                     stx case14_y2
+  1993  cca9 201cc9                     jsr chktoken        
+  1994  ccac f016                       beq ++
+  1995  ccae c9a4                       cmp #$a4        ; TO token
+  1996  ccb0 f003                       beq +
+  1997  ccb2 4c08af                     jmp syntax_error
+  1998  ccb5 207300             +       jsr $0073
+  1999  ccb8 2003c9                     jsr get_coord
+  2000  ccbb 8d79cf                     sta case14_x2lo
+  2001  ccbe 8c7acf                     sty case14_x2hi
+  2002  ccc1 8e7bcf                     stx case14_y2
+  2003  ccc4 202ccd             ++      jsr gethirescolor
+  2004  ccc7 a5fc                       lda arg2        ; hires(1) or text(0)?
+  2005  ccc9 8d75cf                     sta case14_arg1
+  2006  cccc 8e76cf                     stx case14_arg2
+  2007  cccf d017                       bne +           ; skip multiply if hires
+  2008                                  ; lda x1hi
+  2009                                  ; ora x2hi
+  2010                                  ; bne .illegal_quantity
+  2011                                  ; lda x1lo
+  2012                                  ; cmp #40
+  2013                                  ; bcs .illegal_quantity
+  2014                                  ; lda x2lo
+  2015                                  ; cmp #40
+  2016                                  ; bcs .illegal_quantity
+  2017                                  ; lda y1
+  2018                                  ; cmp #25
+  2019                                  ; bcs .illegal_quantity
+  2020                                  ; lda y2
+  2021                                  ; cmp #25
+  2022                                  ; bcs .illegal_quantity
+  2023  ccd1 a203                       ldx #3
+  2024  ccd3 0e63cf             -       asl x1lo        ; multiply x1,y1,x2,y2 all by 8
+  2025  ccd6 2e64cf                     rol x1hi        ;   to convert text coords to pixels
+  2026  ccd9 0e79cf                     asl case14_x2lo
+  2027  ccdc 2e7acf                     rol case14_x2hi
+  2028  ccdf 0e65cf                     asl y1
+  2029  cce2 0e7bcf                     asl case14_y2
+  2030  cce5 ca                         dex
+  2031  cce6 d0eb                       bne -
+  2032  cce8 a5fd               +       lda arg3
+  2033  ccea 8d61cf                     sta hiresfg     ; restore global color, just change region
+  2034  cced a502                       lda arg4
+  2035  ccef 8d62cf                     sta hiresbg     ; restore global color, just change region
+  2036  ccf2 2012c6                     jsr color_range
+  2037  ccf5 4c58c9                     jmp reloop
+  2038                          .chkstor
+  2039  ccf8 a5fc                       lda arg2
+  2040  ccfa f00f                       beq .textcolor
+  2041  ccfc a5fb                       lda arg1
+  2042  ccfe f008                       beq +
+  2043  cd00 202ccd                     jsr gethirescolor
+  2044  cd03 a903                       lda #3
+  2045  cd05 2000c0                     jsr start
+  2046  cd08 4c58c9             +       jmp reloop
+  2047                          .textcolor
+  2048  cd0b a5fb                       lda arg1
+  2049  cd0d 4a                         lsr
+  2050  cd0e 9006                       bcc +
+  2051  cd10 ae61cf                     ldx hiresfg
+  2052  cd13 8e8602                     stx $286        ; text foreground
+  2053  cd16 a6fd               +       ldx arg3
+  2054  cd18 8e61cf                     stx hiresfg     ; restore global hires color because this was for text
+  2055  cd1b 4a                         lsr
+  2056  cd1c 9006                       bcc +
+  2057  cd1e ae62cf                     ldx hiresbg
+  2058  cd21 8e21d0                     stx $d021       ; background
+  2059  cd24 a602               +       ldx arg4
+  2060  cd26 8e62cf                     stx hiresbg     ; restore global hires color because this was for text
+  2061  cd29 4c58c9                     jmp reloop
+  2062                          
+  2063                          gethirescolor ; returns in X, doesn't change A
+  2064  cd2c 48                         pha
+  2065  cd2d ad61cf                     lda hiresfg
+  2066  cd30 0a                         asl
+  2067  cd31 0a                         asl
+  2068  cd32 0a                         asl
+  2069  cd33 0a                         asl
+  2070  cd34 0d62cf                     ora hiresbg
+  2071  cd37 aa                         tax
+  2072  cd38 68                         pla
+  2073  cd39 60                         rts
+  2074                          
+  2075  cd3a 207300             shape   jsr $0073
+  2076  cd3d f018                       beq +
+  2077  cd3f c9d0                       cmp #$d0 ; PUT?
+  2078  cd41 f017                       beq shape_get_put
+  2079  cd43 c9d1                       cmp #$d1 ; XOR?
+  2080  cd45 f013                       beq shape_get_put
+  2081  cd47 c9af                       cmp #$af ; AND?
+  2082  cd49 f00f                       beq shape_get_put
+  2083  cd4b c9b0                       cmp #$b0 ; OR?
+  2084  cd4d f00b                       beq shape_get_put
+  2085  cd4f c9a1                       cmp #$a1 ; GET?
+  2086  cd51 f007                       beq shape_get_put
+  2087  cd53 c9a8                       cmp #$a8 ; NOT?
+  2088  cd55 f003                       beq shape_get_put
+  2089  cd57 4c08af             +       jmp syntax_error
+  2090                          
+  2091                          shape_get_put
+  2092  cd5a 85fb                       sta arg1
+  2093  cd5c 207300                     jsr $0073 ; skip GET/PUT
+  2094  cd5f 208aad                     jsr frmnum
+  2095  cd62 20f7b7                     jsr getadr
+  2096  cd65 a614                       ldx $14
+  2097  cd67 a415                       ldy $15
+  2098  cd69 86fe                       stx ptrl
+  2099  cd6b 84ff                       sty ptrh
+  2100  cd6d 201cc9                     jsr chktoken
+  2101  cd70 c92c                       cmp #$2c ; comma?
+  2102  cd72 f002                       beq +
+  2103  cd74 a940                       lda #$40 ; if not comma, must be @
+  2104  cd76 20ffae             +       jsr chkany ; check for token in A and advance
+  2105  cd79 2003c9                     jsr get_coord
+  2106  cd7c 85fc                       sta arg2
+  2107  cd7e 86fd                       stx arg3
+  2108  cd80 8402                       sty arg4
+  2109  cd82 201cc9                     jsr chktoken
+  2110  cd85 c92c                       cmp #$2c ; comma?
+  2111  cd87 f002                       beq +
+  2112  cd89 a9a4                       lda #$a4; if not comma, must be TO
+  2113  cd8b 20ffae             +       jsr chkany ; check for token in A and advance
+  2114  cd8e 2003c9                     jsr get_coord
+  2115  cd91 8d66cf                     sta x2lo
+  2116  cd94 8c67cf                     sty x2hi
+  2117  cd97 8e68cf                     stx y2
+  2118  cd9a a5fc                       lda arg2
+  2119  cd9c a6fd                       ldx arg3
+  2120  cd9e a402                       ldy arg4
+  2121  cda0 8d63cf                     sta x1lo
+  2122  cda3 8c64cf                     sty x1hi
+  2123  cda6 8e65cf                     stx y1
+  2124  cda9 a6fe                       ldx ptrl
+  2125  cdab a4ff                       ldy ptrh
+  2126  cdad 86fc                       stx arg2
+  2127  cdaf 84fd                       sty arg3
+  2128  cdb1 a5fb                       lda arg1
+  2129  cdb3 c9a1                       cmp #$a1 ; GET
+  2130  cdb5 d006                       bne +
+  2131  cdb7 2066c2                     jsr case10 ; GET SHAPE
+  2132  cdba 4c58c9                     jmp reloop
+  2133  cdbd c9d0               +       cmp #$d0 ; PUT
+  2134  cdbf d00a                       bne +        
+  2135  cdc1 a900                       lda #0
+  2136                          
+  2137  cdc3 8502               -       sta arg4
+  2138  cdc5 205ac3                     jsr case11 ; PUT SHAPE        
+  2139  cdc8 4c58c9                     jmp reloop
+  2140                                                          ; which PUT is it?
+  2141  cdcb c9d1               +       cmp #$d1 ; XOR token
+  2142  cdcd d004                       bne +
+  2143  cdcf a903                       lda #$03 ; XOR mode
+  2144  cdd1 d0f0                       bne -
+  2145                          
+  2146  cdd3 c9b0               +       cmp #$b0 ; OR token
+  2147  cdd5 d004                       bne +        
+  2148  cdd7 a901                       lda #$01 ; OR mode
+  2149  cdd9 d0e8                       bne -
+  2150                          
+  2151  cddb c9af               +       cmp #$af ; AND token
+  2152  cddd d004                       bne +
+  2153  cddf a902                       lda #$02 ; AND mode
+  2154  cde1 d0e0                       bne -
+  2155                          
+  2156  cde3 c9a8               +       cmp #$a8 ; NOT token
+  2157  cde5 d004                       bne +
+  2158  cde7 a940                       lda #$40 ; NOT mode
+  2159  cde9 d0d8                       bne -
+  2160                          
+  2161  cdeb c9d2               +       cmp #$d2 ; PATTERN token
+  2162  cded d007                       bne +
+  2163  cdef a900                       lda #0
+  2164  cdf1 8502                       sta arg4
+  2165  cdf3 2059c5                     jsr pattern
+  2166                          
+  2167  cdf6 4c58c9             +       jmp reloop
+  2168                          
+  2169                          lookahead
+  2170  cdf9 a000                       ldy #0
+  2171  cdfb b17a                       lda ($7A),y
+  2172  cdfd f01b                       beq +		; branch if end of line
+  2173  cdff c93a               	cmp #$3a	; colon
+  2174  ce01 f017               	beq +		; branch if end of statement
+  2175  ce03 a57a                       lda $7A
+  2176  ce05 85fe                       sta ptrl
+  2177  ce07 a57b                       lda $7B
+  2178  ce09 85ff                       sta ptrh
+  2179  ce0b 207300                     jsr $0073
+  2180  ce0e 08                         php
+  2181  ce0f 48                         pha
+  2182  ce10 a5fe                       lda ptrl
+  2183  ce12 857a                       sta $7A
+  2184  ce14 a5ff                       lda ptrh
+  2185  ce16 857b                       sta $7B
+  2186  ce18 68                         pla
+  2187  ce19 28                         plp
+  2188  ce1a 60                 +       rts
+  2189                          
+  2190                          plotstring
+  2191  ce1b 209ead             	jsr frmevl	; evaluate expression
+  2192  ce1e 240d               	bit $d		; string or numeric?
+  2193  ce20 301f               	bmi ++
+  2194  ce22 20f7b7             	jsr getadr	; convert to integer
+  2195  ce25 a614               	ldx $14
+  2196  ce27 a415               	ldy $15
+  2197  ce29 86fb               	stx arg1
+  2198  ce2b 84fc               	sty arg2
+  2199  ce2d 201cc9                     jsr chktoken
+  2200  ce30 c92c                       cmp #$2c        ; comma
+  2201  ce32 f003                       beq +
+  2202  ce34 4c08af                     jmp syntax_error
+  2203  ce37 209bb7             +       jsr getbytc
+  2204  ce3a a5fb               	lda arg1 
+  2205  ce3c a4fc               	ldy arg2
+  2206  ce3e 4c06c9             	jmp chk_coord	; finish equivalent to get_coord, will return to plot
+  2207                          
+  2208  ce41 20a3b6             ++      jsr $b6a3	; pull string from descriptor stack (a=len, x=lo, y=hi addr of string)
+  2209  ce44 8d5dcf                     sta plot_len
+  2210  ce47 86fc                       stx arg2
+  2211  ce49 84fd                       sty arg3
+  2212  ce4b 20fdae             	jsr chkcom      ; comma separates values
+  2213  ce4e 201cc9             	jsr chktoken
+  2214  ce51 2003c9             	jsr get_coord
+  2215  ce54 8d63cf                     sta x1lo
+  2216  ce57 8c64cf                     sty x1hi
+  2217  ce5a 8e65cf                     stx y1
+  2218  ce5d 8d5ecf             	sta plot_xlo
+  2219  ce60 8c5fcf             	sty plot_xhi
+  2220  ce63 8e60cf             	stx plot_y
+  2221  ce66 ad5dcf                     lda plot_len
+  2222  ce69 c900               	cmp #$00
+  2223  ce6b d003               	bne +
+  2224  ce6d 4c32cf                     jmp ++++
+  2225  ce70 a6fc               +       ldx arg2
+  2226  ce72 a4fd                       ldy arg3
+  2227  ce74 8664               	stx $64
+  2228  ce76 8465               	sty $65
+  2229                          
+  2230  ce78 a900                       lda #0
+  2231  ce7a 8d71cf                     sta charrvs
+  2232  ce7d 8d70cf                     sta charlow
+  2233                          
+  2234  ce80 a000               -	ldy #0          ; draw next character
+  2235  ce82 b164               	lda ($64),y
+  2236  ce84 c90e               	cmp #$0E
+  2237  ce86 d008               	bne +
+  2238  ce88 a901               	lda #1
+  2239  ce8a 8d70cf             	sta charlow
+  2240  ce8d 4c24cf             	jmp ++
+  2241  ce90 c98e               +	cmp #$8E
+  2242  ce92 d008               	bne +
+  2243  ce94 a900               	lda #0
+  2244  ce96 8d70cf             	sta charlow
+  2245  ce99 4c24cf             	jmp ++
+  2246  ce9c c912               +	cmp #$12
+  2247  ce9e d007               	bne +
+  2248  cea0 a980               	lda #$80
+  2249  cea2 8d71cf             	sta charrvs
+  2250  cea5 d07d               	bne ++
+  2251  cea7 c992               +	cmp #$92
+  2252  cea9 d007               	bne +
+  2253  ceab a900               	lda #$00
+  2254  cead 8d71cf             	sta charrvs
+  2255  ceb0 f072               	beq ++	
+  2256  ceb2 c920               +       cmp #$20
+  2257  ceb4 906e                       bcc ++          ; skip if out of range
+  2258  ceb6 c9ff                       cmp #$ff        ; pi?
+  2259  ceb8 d004                       bne +++
+  2260  ceba a95e                       lda #$5e        ; convert to pi screen code
+  2261  cebc d02f                       bne +           ; display it
+  2262  cebe c9e0               +++     cmp #$e0
+  2263  cec0 9004                       bcc +++         ; continue on if not e0..fe
+  2264  cec2 e980                       sbc #$80        ; convert to screen code
+  2265  cec4 d027                       bne +           ; display it
+  2266  cec6 c9c0               +++     cmp #$c0        ; check if in range c0..df
+  2267  cec8 9004                       bcc +++         ; continue on if not c0..df
+  2268  ceca e980                       sbc #$80        ; convert to screen code
+  2269  cecc d01f                       bne +           ; display it
+  2270  cece c9a0               +++     cmp #$a0
+  2271  ced0 9005                       bcc +++         ; continue on if not a0..bf
+  2272  ced2 38                         sec
+  2273  ced3 e940                       sbc #$40
+  2274  ced5 d016                       bne +           ; display it
+  2275  ced7 c980               +++     cmp #$80
+  2276  ced9 b049                       bcs ++          ; skip if out of range 80..9f
+  2277  cedb c940                       cmp #$40
+  2278  cedd 900e                       bcc +           ; display if in range 20..3f
+  2279  cedf c960                       cmp #$60
+  2280  cee1 b006                       bcs +++         ; branch if 60..7f
+  2281  cee3 38                         sec             ; otherwise in range 40..5f
+  2282  cee4 e940                       sbc #$40        ; convert ASCII to screen code
+  2283  cee6 4cedce                     jmp +
+  2284  cee9 e920               +++     sbc #$20        ; convert to screen code
+  2285  ceeb d000                       bne +           ; display it
+  2286  ceed 18                 +	clc
+  2287  ceee 6d71cf             	adc charrvs
+  2288  cef1 aa                 	tax
+  2289  cef2 ad70cf             	lda charlow
+  2290  cef5 ac5ccf                     ldy plotcolor
+  2291  cef8 d002                       bne +
+  2292  cefa 0940                       ora #$40        ; NOT mode
+  2293  cefc a8                 +       tay
+  2294  cefd 2074c5             	jsr case13      ; draw char
+  2295                          
+  2296  cf00 18                         clc             ; advance x, check for overflow
+  2297  cf01 ad5ecf                     lda plot_xlo
+  2298  cf04 6908                       adc #8
+  2299  cf06 8d5ecf                     sta plot_xlo
+  2300  cf09 8d63cf                     sta x1lo
+  2301  cf0c aa                         tax
+  2302  cf0d ad5fcf                     lda plot_xhi
+  2303  cf10 6900                       adc #0
+  2304  cf12 8d5fcf                     sta plot_xhi
+  2305  cf15 8d64cf                     sta x1hi
+  2306  cf18 f004                       beq +
+  2307  cf1a e039                       cpx #<313
+  2308  cf1c b014                       bcs ++++
+  2309  cf1e ad60cf             +       lda plot_y
+  2310  cf21 8d65cf                     sta y1
+  2311                          
+  2312  cf24 e664               ++	inc $64
+  2313  cf26 d002               	bne +
+  2314  cf28 e665               	inc $65
+  2315  cf2a ce5dcf             +	dec plot_len
+  2316  cf2d f003               	beq ++++
+  2317  cf2f 4c80ce             	jmp -
+  2318  cf32 68                 ++++	pla		; remove return address from cpu stack
+  2319  cf33 68                 	pla
+  2320  cf34 4c58c9             	jmp reloop
+  2321                          
+  2322                          basic_error
+  2323  cf37 48                         pha
+  2324  cf38 c981                       cmp #$81        ; READY
+  2325  cf3a f014                       beq +           ; skip if no error
+  2326  cf3c ad11d0                     lda scroly      ; retrieve control register
+  2327  cf3f 2920                       and #$20        ; hires active?
+  2328  cf41 f00d                       beq +           ; branch if not hires
+  2329  cf43 8a                         txa
+  2330  cf44 48                         pha
+  2331  cf45 98                         tya
+  2332  cf46 48                         pha
+  2333  cf47 a905                       lda #5
+  2334  cf49 2000c0                     jsr start
+  2335  cf4c 68                         pla
+  2336  cf4d a8                         tay
+  2337  cf4e 68                         pla
+  2338  cf4f aa                         tax
+  2339                          
+  2340  cf50 68                 +       pla             ; restore all registers
+  2341  cf51 4c8be3                     jmp $e38b ; IERROR - Print BASIC Error Message Routine
+  2342                          
+  2343                          ; variables
+  2344                          
+  2345  cf54 0000               copyx !word 0
+  2346  cf56 00                 copyy !byte 0
+  2347  cf57 0000               copyptr !word 0
+  2348  cf59 0000               copycount !word 0
+  2349                          
+  2350  cf5b 00                 pattern_flag !byte 0
+  2351                          
+  2352  cf5c 00                 plotcolor !byte 0
+  2353                          
+  2354  cf5d 00                 plot_len !byte 0
+  2355  cf5e 00                 plot_xlo !byte 0
+  2356  cf5f 00                 plot_xhi !byte 0
+  2357  cf60 00                 plot_y   !byte 0
+  2358                          
+  2359  cf61 0e                 hiresfg !byte 14
+  2360  cf62 06                 hiresbg !byte 6
+  2361                          
+  2362  cf63 00                 x1lo    !byte 0
+  2363  cf64 00                 x1hi    !byte 0
+  2364  cf65 00                 y1      !byte 0
+  2365  cf66 00                 x2lo    !byte 0
+  2366  cf67 00                 x2hi    !byte 0
+  2367  cf68 00                 y2      !byte 0
+  2368  cf69 00                 xslo    !byte 0
+  2369  cf6a 00                 xshi    !byte 0
+  2370  cf6b 00                 yslo    !byte 0
+  2371  cf6c 00                 yshi    !byte 0
+  2372  cf6d 00                 fraclo  !byte 0
+  2373  cf6e 00                 frachi  !byte 0
+  2374  cf6f 00                 incr    !byte 0
+  2375                          
+  2376  cf70 00                 charlow	!byte 0
+  2377  cf71 00                 charrvs !byte 0
+  2378                          
+  2379                          ; coloring needs its own variables to not interfere with other uses
+  2380  cf72 00                 case14_xslo !byte 0
+  2381  cf73 00                 case14_xshi !byte 0
+  2382  cf74 00                 case14_yslo !byte 0
+  2383  cf75 00                 case14_arg1 !byte 0
+  2384  cf76 00                 case14_arg2 !byte 0
+  2385  cf77 00                 case14_arg3 !byte 0
+  2386  cf78 00                 case14_arg4 !byte 0
+  2387  cf79 00                 case14_x2lo !byte 0
+  2388  cf7a 00                 case14_x2hi !byte 0
+  2389  cf7b 00                 case14_y2 !byte 0
+  2390                          
+  2391  cf7c 00                 chk_phys_temp !byte 0
+  2392                          
+  2393                          ; 10 print chr$(147);
+  2394                          ; 15 for i=0 to 1
+  2395                          ; 20 for r=0 to 15
+  2396                          ; 25 if i=0 then print spc(20);
+  2397                          ; 30 for c=0 to 15
+  2398                          ; 35 if i=0 and r<8 then:poke 1024+(r+17)*40+c,r*16+c
+  2399                          ; 36 if i=0 and r>=8 then:poke 1024+(r+9)*40+c+20,r*16+c
+  2400                          ; 37 if i=0 and ((r>=2 and r<8) or r>=10) then print chr$(r*16+c);
+  2401                          ; 40 if i=1 then:plot 1,chr$(r*16+c),c*8,r*8
+  2402                          ; 50 next c
+  2403                          ; 54 if i=0 then print
+  2404                          ; 55 next r
+  2405                          ; 60 if i=0 then:printchr$(19):print:print"please wait...";:hires 0 swap:hires 1
+  2406                          ; 70 next i
+  2407                          ; 80 print "s";
+  2408                          ; 90 for i=0 to 1 step 0:get k$:i=len(k$):next
+  2409                          ; 100 hires 0
+  2410                          
+  2411                          ; 10 hires 1 clr
+  2412                          ; 20 plot 1,"hires",rnd(1)*312,rnd(1)*192
+  2413                          ; 30 goto 20
+  2414                          
+  2415                                  ; C64 tokens are A09E-A19E
+  2416  cf7d 48495245           tokens1 !text "HIRE"            ; CC
+  2417  cf81 d3                             !byte 'S' OR $80
+  2418  cf82 434f4c4f                   !text "COLO"            ; CD
+  2419  cf86 d2                             !byte 'R' OR $80
+  2420  cf87 504c4f                     !text "PLO"             ; CE
+  2421  cf8a d4                            !byte 'T' OR $80
+  2422  cf8b 53484150                   !text "SHAP"            ; CF
+  2423  cf8f c5                             !byte 'E' OR $80
+  2424  cf90 5055                       !text "PU"              ; D0
+  2425  cf92 d4                           !byte 'T' OR $80
+  2426  cf93 584f                       !text "XO"              ; D1
+  2427  cf95 d2                           !byte 'R' OR $80
+  2428  cf96 504154544552               !text "PATTER"          ; D2
+  2429  cf9c ce                            !byte 'N' OR $80
+  2430  cf9d 535741                     !text "SWA"             ; D3
+  2431  cfa0 d0                            !byte 'P' OR $80
+  2432  cfa1 524543                     !text "REC"             ; D4
+  2433  cfa4 d4                            !byte 'T' OR $80
+  2434  cfa5 00                         !byte 0                 ; end of table
+  2435                          
+  2436                          scrledit_patch
+  2437  cfa6 a52b                       lda $2b
+  2438  cfa8 c901                       cmp #$01
+  2439  cfaa d02a                       bne +
+  2440  cfac a52c                       lda $2c
+  2441  cfae c90d                       cmp #$0d
+  2442  cfb0 d024                       bne +
+  2443  cfb2 a9b9                       lda #$b9
+  2444  cfb4 a29e                       ldx #$9e
+  2445  cfb6 a0a0                       ldy #$a0
+  2446  cfb8 cd2b0b                     cmp $0b2b
+  2447  cfbb d019                       bne +
+  2448  cfbd ec2c0b                     cpx $0b2c
+  2449  cfc0 d014                       bne +
+  2450  cfc2 cc2d0b                     cpy $0b2d
+  2451  cfc5 d00f                       bne +
+  2452  cfc7 a94c                       lda #$4c
+  2453  cfc9 a2d7                       ldx #<scrledit_hook
+  2454  cfcb a0cf                       ldy #>scrledit_hook
+  2455  cfcd 8d1f0b                     sta $0b1f
+  2456  cfd0 8e200b                     stx $0b20
+  2457  cfd3 8c210b                     sty $0b21
+  2458  cfd6 60                 +       rts        
+  2459                          
+  2460                          scrledit_hook
+  2461  cfd7 38                         SEC
+  2462  cfd8 e97f                       SBC #$7F
+  2463  cfda c94c                       CMP #$4C
+  2464  cfdc 901b                       BCC +
+  2465  cfde c956                       CMP #$56
+  2466  cfe0 b017                       BCS +
+  2467  cfe2 e94b                       SBC #$4B
+  2468  cfe4 48                         PHA
+  2469  cfe5 a97d                       LDA #<tokens1
+  2470  cfe7 a2cf                       LDX #>tokens1
+  2471  cfe9 8d2c0b             -       STA $0B2C
+  2472  cfec 8d340b                     STA $0B34
+  2473  cfef 8e2d0b                     STX $0B2D
+  2474  cff2 8e350b                     STX $0B35
+  2475  cff5 68                         PLA
+  2476  cff6 4c220b                     JMP $0B22
+  2477  cff9 48                 +       PHA
+  2478  cffa a99e                       LDA #$9E
+  2479  cffc a2a0                       LDX #$A0
+  2480  cffe d0e9                       BNE -
+  2481                          
+  2482  d000 ad64cf             fix_x   lda x1hi
+  2483  d003 f017                       beq +++
+  2484  d005 c901                       cmp #>319
+  2485  d007 f007                       beq +
+  2486  d009 a901                       lda #>319
+  2487  d00b 8d64cf                     sta x1hi
+  2488  d00e d007                       bne ++
+  2489  d010 ad63cf             +       lda x1lo
+  2490  d013 c93f                       cmp #<319
+  2491  d015 9005                       bcc +++
+  2492  d017 a93f               ++      lda #<319
+  2493  d019 8d63cf                     sta x1lo
+  2494  d01c 60                 +++     rts
+  2495                                  
+  2496  d01d ad14c0             case3   lda option_plotting
+  2497  d020 206ac5                     jsr hires_to_color
+  2498  d023 85ff                       sta ptrh
+  2499                          
+  2500  d025 a5fc                       lda arg2
+  2501  d027 a204                       ldx #$04        ; 4 pages of 256 bytes
+  2502  d029 a000                       ldy #0
+  2503  d02b 84fe                       sty ptrl
+  2504  d02d 8c16c0                     sty option_apply_color  ; clear option when initializing color
+  2505                          initvr
+  2506  d030 91fe                       sta (ptrl),y    ; set fg/bg of hires cell
+  2507  d032 c8                         iny
+  2508  d033 d0fb                       bne initvr
+  2509  d035 e6ff                       inc ptrh
+  2510  d037 ca                         dex
+  2511  d038 d0f6                       bne initvr
+  2512                          	
+  2513  d03a 60                 	rts
+  2514                          
+  2515  d03b ad14c0             case4   lda option_plotting
+  2516  d03e 85ff                       sta ptrh
+  2517  d040 a900                       lda #0
+  2518  d042 85fe                       sta ptrl
+  2519  d044 a21f                       ldx #$1F ; number of pages, note: one less than full 8K
+  2520  d046 a8                         tay
+  2521                          loopclrg
+  2522  d047 91fe                       sta (ptrl),y
+  2523  d049 c8                         iny
+  2524  d04a d0fb                       bne loopclrg
+  2525  d04c e6ff                       inc ptrh
+  2526  d04e ca                         dex
+  2527  d04f d0f6                       bne loopclrg
+  2528                          
+  2529                          ; clear only part of last page 31*256+64 = 8000
+  2530  d051 91fe               -       sta (ptrl),y
+  2531  d053 c8                         iny
+  2532  d054 c040                       cpy #$40
+  2533  d056 d0f9                       bne -
+  2534                          
+  2535  d058 60                 	rts
+  2536                          
+  2537                          case6 ; set/clr pixel
+  2538  d059 a5fc                       lda arg2 ; xc lo
+  2539  d05b 8d63cf                     sta x1lo
+  2540  d05e a5fd                       lda arg3 ; yc
+  2541  d060 8d65cf                     sta y1
+  2542  d063 a502                       lda arg4 ; xc hi and pixel color
+  2543  d065 2901                       and #$01 ; isolate to xc hi
+  2544  d067 8d64cf                     sta x1hi
+  2545                          case6_from_line
+  2546  d06a 2039c1                     jsr xyaddr
+  2547                          
+  2548  d06d ad63cf                     lda x1lo
+  2549  d070 2907                       and #$07
+  2550  d072 85fb                       sta arg1
+  2551  d074 a907                       lda #$07
+  2552  d076 a201                       ldx #$01
+  2553  d078 38                         sec
+  2554  d079 e5fb                       sbc arg1
+  2555  d07b 86fb                       stx arg1
+  2556  d07d a8                         tay
+  2557  d07e c000                       cpy #$00
+  2558  d080 f007                       beq shdone
+  2559                          findbit
+  2560  d082 06fb                       asl arg1
+  2561  d084 88                         dey
+  2562  d085 d0fb                       bne findbit
+  2563  d087 f000                       beq shdone
+  2564                          
+  2565                          shdone
+  2566  d089 a502                       lda arg4
+  2567  d08b 2902                       and #$02
+  2568  d08d aa                         tax
+  2569  d08e b1fe                       lda (ptrl),y    ; note y is guaranteed zero by dey branch above
+  2570  d090 05fb                       ora arg1
+  2571  d092 e000                       cpx #$00        ; zero=set pixel, non-zero=clear pixel
+  2572  d094 f002                       beq +
+  2573  d096 45fb                       eor arg1
+  2574  d098 91fe               +       sta (ptrl),y
+  2575                                  ; fall through to check_apply_color
+  2576                          
+  2577                          ; 10 color 1,14,6,14
+  2578                          ; 20 hires 1 clr
+  2579                          ; 30 plot color rnd(1)*16
+  2580                          ; 40 plot 1,rnd(1)*320,rnd(1)*200 : rem or plot to
+  2581                          ; 50 goto 30
+  2582                          check_apply_color
+  2583  d09a 2c16c0                     bit option_apply_color ; check if need to apply color
+  2584  d09d 502f                       bvc +
+  2585  d09f a5fe                       lda ptrl
+  2586  d0a1 48                         pha
+  2587  d0a2 a5ff                       lda ptrh
+  2588  d0a4 48                         pha
+  2589  d0a5 ad63cf                     lda x1lo
+  2590  d0a8 8d79cf                     sta case14_x2lo
+  2591  d0ab ad64cf                     lda x1hi
+  2592  d0ae 8d7acf                     sta case14_x2hi
+  2593  d0b1 ad65cf             	lda y1
+  2594  d0b4 8d7bcf             	sta case14_y2
+  2595  d0b7 a901                       lda #1
+  2596  d0b9 8d77cf                     sta case14_arg3
+  2597  d0bc 8d75cf                     sta case14_arg1
+  2598  d0bf 202ccd                     jsr gethirescolor
+  2599  d0c2 8e76cf                     stx case14_arg2
+  2600  d0c5 2012c6                     jsr color_range
+  2601  d0c8 68                         pla
+  2602  d0c9 85ff                       sta ptrh
+  2603  d0cb 68                         pla
+  2604  d0cc 85fe                       sta ptrl
+  2605  d0ce 60                 +       rts
+  2606                          
+  2607                          line
+  2608  d0cf 2000d0                     jsr fix_x   ; in case overrun from previous shape/plot/pattern operation
+  2609  d0d2 38                         sec         ; xs(lope)=x2-x1
+  2610  d0d3 ad66cf                     lda x2lo
+  2611  d0d6 ed63cf                     sbc x1lo
+  2612  d0d9 8d69cf                     sta xslo
+  2613  d0dc ad67cf                     lda x2hi
+  2614  d0df ed64cf                     sbc x1hi
+  2615  d0e2 8d6acf                     sta xshi
+  2616  d0e5 38                         sec         ; ys(lope)=y2-y1
+  2617  d0e6 ad68cf                     lda y2
+  2618  d0e9 ed65cf                     sbc y1
+  2619  d0ec 8d6bcf                     sta yslo
+  2620  d0ef a900                       lda #$00    ;extend sign so 16-bit
+  2621  d0f1 e900                       sbc #$00
+  2622  d0f3 8d6ccf                     sta yshi
+  2623  d0f6 0d6bcf                     ora yslo    ; xs == 0 && ys == 0 ?
+  2624  d0f9 0d6acf                     ora xshi
+  2625  d0fc 0d69cf                     ora xslo
+  2626  d0ff d003                       bne isline  ; no - is line
+  2627  d101 4c6ad0                     jmp case6_from_line   ; yes- isdot
+  2628                          isline
+  2629  d104 a901                       lda #$01
+  2630  d106 85fc                       sta arg2    ; arg2 (xs dir) = +1
+  2631  d108 85fd                       sta arg3    ; arg3 (ys dir) = +1
+  2632  d10a ad6acf                     lda xshi
+  2633  d10d 1015                       bpl xpos    ; branch if xs is pos.
+  2634  d10f a9ff                       lda #$ff
+  2635  d111 85fc                       sta arg2    ; arg2 (xs dir) = -1
+  2636  d113 38                         sec         ; xs = abs(xs)
+  2637  d114 a900                       lda #$00
+  2638  d116 ed69cf                     sbc xslo
+  2639  d119 8d69cf                     sta xslo
+  2640  d11c a900                       lda #$00
+  2641  d11e ed6acf                     sbc xshi
+  2642  d121 8d6acf                     sta xshi
+  2643                          xpos
+  2644  d124 ad6ccf                     lda yshi
+  2645  d127 1015                       bpl ypos    ; branch if ys is pos.
+  2646  d129 a9ff                       lda #$ff
+  2647  d12b 85fd                       sta arg3    ; arg3 (ys dir) = -1
+  2648  d12d 38                         sec         ; ys = abs(ys)
+  2649  d12e a900                       lda #$00
+  2650  d130 ed6bcf                     sbc yslo
+  2651  d133 8d6bcf                     sta yslo
+  2652  d136 a900                       lda #$00
+  2653  d138 ed6ccf                     sbc yshi
+  2654  d13b 8d6ccf                     sta yshi
+  2655                          ypos
+  2656                          
+  2657  d13e ad6ccf                     lda yshi; ys(slope) >= xs(slope) ?
+  2658  d141 cd6acf                     cmp xshi
+  2659  d144 9010                       bcc ylower  ; no - branch if lower
+  2660  d146 f003                       beq chklows ; equal - cmp lo bytes
+  2661  d148 4c40d2                     jmp yhigher ; yes - absolute jump
+  2662                          chklows
+  2663  d14b ad6bcf                     lda yslo
+  2664  d14e cd69cf                     cmp xslo
+  2665  d151 9003                       bcc ylower  ; no - branch if lower
+  2666  d153 4c40d2                     jmp yhigher ; yes - absolute jump
+  2667                          
+  2668                          ylower
+  2669                          
+  2670  d156 a5fd                       lda arg3    ; dir of ys(lope)
+  2671  d158 1011                       bpl ypos2   ; positive, abs is ok
+  2672  d15a 38                         sec         ; ys = -ys
+  2673  d15b a900                       lda #$00
+  2674  d15d ed6bcf                     sbc yslo
+  2675  d160 8d6bcf                     sta yslo
+  2676  d163 a900                       lda #$00
+  2677  d165 ed6ccf                     sbc yshi
+  2678  d168 8d6ccf                     sta yshi
+  2679                          ypos2
+  2680                          
+  2681  d16b a5fc                       lda arg2    ; dir of xs(lope)
+  2682  d16d 8d6fcf                     sta incr    ; used for step xi
+  2683  d170 a900                       lda #$00    ; yfrac=0
+  2684  d172 8d6dcf                     sta fraclo
+  2685  d175 8d6ecf                     sta frachi
+  2686                          
+  2687                          forx:    ; for x=x1 to x2 step xi
+  2688                          
+  2689  d178 ad63cf                     lda x1lo    ; arg2=x1
+  2690  d17b 85fc                       sta arg2
+  2691  d17d ad65cf                     lda y1
+  2692  d180 85fd                       sta arg3    ; arg3=y1
+  2693  d182 4602                       lsr arg4    ; remove old x1 9th bit with shift right
+  2694  d184 ad64cf                     lda x1hi
+  2695  d187 2901                       and #$01
+  2696  d189 4a                         lsr         ; move x1 9th bit into carry
+  2697  d18a 2602                       rol arg4    ; rotate new x1 9th bit back in bit0, saving pixel color in bit1
+  2698                          
+  2699  d18c 2059d0                     jsr case6   ; plot point
+  2700                          
+  2701  d18f 18                         clc         ; yfrac += ys(lope)
+  2702  d190 ad6dcf                     lda fraclo
+  2703  d193 6d6bcf                     adc yslo
+  2704  d196 8d6dcf                     sta fraclo
+  2705  d199 ad6ecf                     lda frachi
+  2706  d19c 6d6ccf                     adc yshi
+  2707  d19f 8d6ecf                     sta frachi
+  2708                          
+  2709  d1a2 ad6ccf                     lda yshi    ; ys(lope) < 0 ?
+  2710  d1a5 3034                       bmi ysneg   ; yes - branch
+  2711  d1a7 f002                       beq chkyslo ; zero? chk low bits
+  2712  d1a9 d005                       bne yspos   ; non-zero
+  2713                          chkyslo
+  2714  d1ab ad6bcf                     lda yslo
+  2715  d1ae f060                       beq nextx   ; skip if zero
+  2716                          yspos
+  2717  d1b0 ad6ecf                     lda frachi  ; yfrac >= abs(xs) ?
+  2718  d1b3 cd6acf                     cmp xshi
+  2719  d1b6 9058                       bcc nextx  ; no - proceed to nextx
+  2720  d1b8 d008                       bne incy1
+  2721  d1ba ad6dcf                     lda fraclo
+  2722  d1bd cd69cf                     cmp xslo
+  2723  d1c0 904e                       bcc nextx
+  2724                                     ; yes...
+  2725                          incy1
+  2726  d1c2 ee65cf                     inc y1      ; ++y1
+  2727                          
+  2728  d1c5 38                         sec         ; yfrac -= abs(xs)
+  2729  d1c6 ad6dcf                     lda fraclo
+  2730  d1c9 ed69cf                     sbc xslo
+  2731  d1cc 8d6dcf                     sta fraclo
+  2732  d1cf ad6ecf                     lda frachi
+  2733  d1d2 ed6acf                     sbc xshi
+  2734  d1d5 8d6ecf                     sta frachi
+  2735                          
+  2736  d1d8 18                         clc         ; force carry clear
+  2737  d1d9 9035                       bcc nextx   ; abs branch nextx
+  2738                          
+  2739                          ysneg
+  2740  d1db 38                         sec         ; yfrac <= -abs(xs) ?
+  2741  d1dc a900                       lda #$00
+  2742  d1de ed69cf                     sbc xslo
+  2743  d1e1 85fe                       sta ptrl
+  2744  d1e3 a900                       lda #$00
+  2745  d1e5 ed6acf                     sbc xshi
+  2746  d1e8 85ff                       sta ptrh
+  2747  d1ea ad6ecf                     lda frachi
+  2748  d1ed c5ff                       cmp ptrh
+  2749  d1ef 901f                       bcc nextx
+  2750  d1f1 d007                       bne decy1
+  2751  d1f3 ad6dcf                     lda fraclo
+  2752  d1f6 c5fe                       cmp ptrl
+  2753  d1f8 9016                       bcc nextx
+  2754                          decy1
+  2755  d1fa ce65cf                     dec y1
+  2756                          
+  2757  d1fd 18                         clc
+  2758  d1fe ad6dcf                     lda fraclo
+  2759  d201 6d69cf                     adc xslo
+  2760  d204 8d6dcf                     sta fraclo
+  2761  d207 ad6ecf                     lda frachi
+  2762  d20a 6d6acf                     adc xshi
+  2763  d20d 8d6ecf                     sta frachi
+  2764                          
+  2765                          nextx
+  2766  d210 ad64cf                     lda x1hi     ; x1 == x2 ?
+  2767  d213 cd67cf                     cmp x2hi
+  2768  d216 d00f                       bne stepx    ; no - so branch
+  2769  d218 ad63cf                     lda x1lo
+  2770  d21b cd66cf                     cmp x2lo
+  2771  d21e d007                       bne stepx    ; no - so branch
+  2772  d220 ad68cf                     lda y2       ; reload y2 and restore in y1
+  2773  d223 8d65cf                     sta y1       ;   because have seen at -1
+  2774  d226 60                         rts          ; yes - line is done
+  2775                          
+  2776                          stepx:      ; x += inc (+/- 1)
+  2777  d227 a200                       ldx #$00     ; assume positive
+  2778  d229 ad6fcf                     lda incr
+  2779  d22c 1001                       bpl xnotneg
+  2780  d22e ca                         dex          ; extend sign to regx
+  2781                          xnotneg
+  2782  d22f 18                         clc
+  2783  d230 6d63cf                     adc x1lo
+  2784  d233 8d63cf                     sta x1lo
+  2785  d236 8a                         txa
+  2786  d237 6d64cf                     adc x1hi
+  2787  d23a 8d64cf                     sta x1hi
+  2788                          
+  2789                          bforx
+  2790  d23d 4c78d1                     jmp forx
+  2791                          
+  2792                          yhigher
+  2793                          
+  2794  d240 a5fc                       lda arg2    ; dir of xs(lope)
+  2795  d242 1011                       bpl xpos2   ; positive, abs is ok
+  2796  d244 38                         sec         ; xs = -xs
+  2797  d245 a900                       lda #$00
+  2798  d247 ed69cf                     sbc xslo
+  2799  d24a 8d69cf                     sta xslo
+  2800  d24d a900                       lda #$00
+  2801  d24f ed6acf                     sbc xshi
+  2802  d252 8d6acf                     sta xshi
+  2803                          xpos2
+  2804                          
+  2805  d255 a5fd                       lda arg3    ; dir of ys(lope)
+  2806  d257 8d6fcf                     sta incr    ; used for step yi
+  2807  d25a a900                       lda #$00    ; xfrac=0
+  2808  d25c 8d6dcf                     sta fraclo
+  2809  d25f 8d6ecf                     sta frachi
+  2810                          
+  2811                          fory:    ; for y=y1 to y2 step yi
+  2812                          
+  2813  d262 ad63cf                     lda x1lo    ; arg2=x1
+  2814  d265 85fc                       sta arg2
+  2815  d267 ad65cf                     lda y1
+  2816  d26a 85fd                       sta arg3    ; arg3=y1
+  2817  d26c 4602                       lsr arg4    ; remove old x1 9th bit with shift right
+  2818  d26e ad64cf                     lda x1hi
+  2819  d271 2901                       and #$01
+  2820  d273 4a                         lsr         ; move x1 9th bit into carry
+  2821  d274 2602                       rol arg4    ; rotate new x1 9th bit back in bit0, saving pixel color in bit1
+  2822                          
+  2823  d276 2059d0                     jsr case6   ; plot point
+  2824                          
+  2825  d279 18                         clc         ; xfrac += xs(lope)
+  2826  d27a ad6dcf                     lda fraclo
+  2827  d27d 6d69cf                     adc xslo
+  2828  d280 8d6dcf                     sta fraclo
+  2829  d283 ad6ecf                     lda frachi
+  2830  d286 6d6acf                     adc xshi
+  2831  d289 8d6ecf                     sta frachi
+  2832                          
+  2833  d28c ad6acf                     lda xshi    ; xs(lope) < 0 ?
+  2834  d28f 3039                       bmi xsneg   ; yes - branch
+  2835  d291 f002                       beq chkxslo ; zero? chk low bits
+  2836  d293 d005                       bne xspos   ; non-zero
+  2837                          chkxslo
+  2838  d295 ad69cf                     lda xslo
+  2839  d298 f073                       beq nexty   ; skip if zero
+  2840                          xspos
+  2841  d29a ad6ecf                     lda frachi  ; xfrac >= abs(ys) ?
+  2842  d29d cd6ccf                     cmp yshi
+  2843  d2a0 906b                       bcc nexty  ; no - proceed to nextx
+  2844  d2a2 d008                       bne incx1
+  2845  d2a4 ad6dcf                     lda fraclo
+  2846  d2a7 cd6bcf                     cmp yslo
+  2847  d2aa 9061                       bcc nexty
+  2848                                     ; yes...
+  2849                          incx1
+  2850  d2ac ee63cf                     inc x1lo    ; ++x1
+  2851  d2af d003                       bne noincxhi
+  2852  d2b1 ee64cf                     inc x1hi
+  2853                          noincxhi
+  2854                          
+  2855  d2b4 38                         sec         ; xfrac -= abs(ys)
+  2856  d2b5 ad6dcf                     lda fraclo
+  2857  d2b8 ed6bcf                     sbc yslo
+  2858  d2bb 8d6dcf                     sta fraclo
+  2859  d2be ad6ecf                     lda frachi
+  2860  d2c1 ed6ccf                     sbc yshi
+  2861  d2c4 8d6ecf                     sta frachi
+  2862                          
+  2863  d2c7 18                         clc         ; force carry clear
+  2864  d2c8 9043                       bcc nexty   ; abs branch nexty
+  2865                          
+  2866                          xsneg
+  2867                          
+  2868  d2ca 38                         sec         ; xfrac <= -abs(ys) ?
+  2869  d2cb a900                       lda #$00
+  2870  d2cd ed6bcf                     sbc yslo
+  2871  d2d0 85fe                       sta ptrl
+  2872  d2d2 a900                       lda #$00
+  2873  d2d4 ed6ccf                     sbc yshi
+  2874  d2d7 85ff                       sta ptrh
+  2875  d2d9 ad6ecf                     lda frachi
+  2876  d2dc c5ff                       cmp ptrh
+  2877  d2de 902d                       bcc nexty
+  2878  d2e0 d007                       bne decx1
+  2879  d2e2 ad6dcf                     lda fraclo
+  2880  d2e5 c5fe                       cmp ptrl
+  2881  d2e7 9024                       bcc nexty
+  2882                          
+  2883                          decx1
+  2884  d2e9 38                         sec
+  2885  d2ea ad63cf                     lda x1lo
+  2886  d2ed e901                       sbc #$01
+  2887  d2ef 8d63cf                     sta x1lo
+  2888  d2f2 ad64cf                     lda x1hi
+  2889  d2f5 e900                       sbc #$00
+  2890  d2f7 8d64cf                     sta x1hi
+  2891                          
+  2892  d2fa 18                         clc
+  2893  d2fb ad6dcf                     lda fraclo
+  2894  d2fe 6d6bcf                     adc yslo
+  2895  d301 8d6dcf                     sta fraclo
+  2896  d304 ad6ecf                     lda frachi
+  2897  d307 6d6ccf                     adc yshi
+  2898  d30a 8d6ecf                     sta frachi
+  2899                          
+  2900                          nexty
+  2901  d30d ad65cf                     lda y1       ; y1 == y2 ?
+  2902  d310 cd68cf                     cmp y2
+  2903  d313 d00d                       bne stepy    ; no - so branch
+  2904  d315 ad66cf                     lda x2lo     ; reload x1 with x2 just in case
+  2905  d318 8d63cf                     sta x1lo     ;   to avoid -1
+  2906  d31b ad67cf                     lda x2hi
+  2907  d31e 8d64cf                     sta x1hi
+  2908  d321 60                         rts          ; yes - line is done
+  2909                          
+  2910                          stepy:      ; y += inc (+/- 1)
+  2911  d322 18                         clc
+  2912  d323 ad65cf                     lda y1
+  2913  d326 6d6fcf                     adc incr
+  2914  d329 8d65cf                     sta y1
+  2915                          
+  2916  d32c 4c62d2                     jmp fory
+  2917                          
+  2918                          ; end line
+  2919                          
+  2920                          case11_apply_color      ; shape/pattern put with color, after drawing shape, apply color to whole region
+  2921  d32f ad72cf                     lda case14_xslo
+  2922  d332 8d63cf                     sta x1lo
+  2923  d335 ad73cf                     lda case14_xshi
+  2924  d338 8d64cf                     sta x1hi
+  2925  d33b ad74cf                     lda case14_yslo
+  2926  d33e 8d65cf                     sta y1
+  2927  d341 ad66cf                     lda x2lo
+  2928  d344 8d79cf                     sta case14_x2lo
+  2929  d347 ad67cf                     lda x2hi
+  2930  d34a 8d7acf                     sta case14_x2hi
+  2931  d34d ad68cf                     lda y2
+  2932  d350 8d7bcf                     sta case14_y2
+  2933  d353 a901                       lda #1
+  2934  d355 8d75cf                     sta case14_arg1
+  2935  d358 202ccd                     jsr gethirescolor
+  2936  d35b 8e76cf                     stx case14_arg2
+  2937  d35e 4c12c6                     jmp color_range
+  2938                          
+  2939                          draw_rect
+  2940  d361 adfccb                     lda rect_x1lo
+  2941  d364 8d63cf                     sta x1lo
+  2942  d367 adfdcb                     lda rect_x1hi
+  2943  d36a 8d64cf                     sta x1hi
+  2944  d36d adfecb                     lda rect_y1
+  2945  d370 8d65cf                     sta y1
+  2946  d373 8d68cf                     sta y2
+  2947  d376 adffcb                     lda rect_x2lo
+  2948  d379 8d66cf                     sta x2lo
+  2949  d37c ad00cc                     lda rect_x2hi
+  2950  d37f 8d67cf                     sta x2hi
+  2951  d382 adfbcb                     lda rect_pixel
+  2952  d385 0a                         asl
+  2953  d386 4902                       eor #$02
+  2954  d388 8502                       sta arg4
+  2955  d38a 20cfd0                     jsr line
+  2956                          
+  2957  d38d adffcb                     lda rect_x2lo
+  2958  d390 8d66cf                     sta x2lo
+  2959  d393 ad00cc                     lda rect_x2hi
+  2960  d396 8d67cf                     sta x2hi
+  2961  d399 ad01cc                     lda rect_y2
+  2962  d39c 8d68cf                     sta y2
+  2963  d39f adfbcb                     lda rect_pixel
+  2964  d3a2 20cfd0                     jsr line
+  2965                          
+  2966  d3a5 adfccb                     lda rect_x1lo
+  2967  d3a8 8d66cf                     sta x2lo
+  2968  d3ab adfdcb                     lda rect_x1hi
+  2969  d3ae 8d67cf                     sta x2hi
+  2970  d3b1 ad01cc                     lda rect_y2
+  2971  d3b4 8d68cf                     sta y2
+  2972  d3b7 20cfd0                     jsr line
+  2973                          
+  2974  d3ba adfccb                     lda rect_x1lo
+  2975  d3bd 8d66cf                     sta x2lo
+  2976  d3c0 adfdcb                     lda rect_x1hi
+  2977  d3c3 8d67cf                     sta x2hi
+  2978  d3c6 adfecb                     lda rect_y1
+  2979  d3c9 8d65cf                     sta y1
+  2980  d3cc 4ccfd0                     jmp line
+  2981                          
+  2982                          screen_swap
+  2983  d3cf 8c15c0                     sty option_alternate
+  2984  d3d2 86fe                       stx ptrl
+  2985  d3d4 84ff                       sty ptrh
+  2986  d3d6 ad14c0                     lda option_plotting
+  2987  d3d9 85fc                       sta arg2
+  2988  d3db a900                       lda #0
+  2989  d3dd 85fb                       sta arg1
+  2990  d3df a920                       lda #$20 ; 32 pages of 256 bytes
+  2991  d3e1 85fd                       sta arg3
+  2992  d3e3 2008d4                     jsr swap ; graphic screen
+  2993                          
+  2994                                  ; also swap color RAM between screens
+  2995  d3e6 ad15c0                     lda option_alternate
+  2996  d3e9 206ac5                     jsr hires_to_color
+  2997  d3ec 85ff                       sta ptrh
+  2998  d3ee ad14c0                     lda option_plotting
+  2999  d3f1 206ac5                     jsr hires_to_color
+  3000  d3f4 85fc                       sta arg2
+  3001  d3f6 a000                       ldy #0
+  3002  d3f8 84fe                       sty ptrl
+  3003  d3fa 84fb                       sty arg1
+  3004  d3fc a900                       lda #0
+  3005  d3fe a904                       lda #$04 ; 4 pages of 256 bytes
+  3006  d400 85fd                       sta arg3
+  3007  d402 2008d4                     jsr swap
+  3008  d405 4c87c0                     jmp install_no_interrupt ; in case swapped out
+  3009                          
+  3010                          swap
+  3011  d408 a000                       ldy #$00
+  3012  d40a 2402               -       bit arg4
+  3013  d40c 7007                       bvs +           ; ptrl -> arg1 only
+  3014  d40e b1fb                       lda (arg1),y
+  3015  d410 a602                       ldx arg4
+  3016  d412 300a                       bmi ++          ; arg1 -> ptrl only
+  3017  d414 aa                         tax
+  3018  d415 b1fe               +       lda (ptrl),y
+  3019  d417 91fb                       sta (arg1),y
+  3020  d419 2402                       bit arg4
+  3021  d41b 7003                       bvs +
+  3022  d41d 8a                         txa             ; swap in progress if here, ptrl <-> arg1
+  3023  d41e 91fe               ++      sta (ptrl),y
+  3024  d420 c8                 +       iny
+  3025  d421 d0e7                       bne -
+  3026  d423 e6fc                       inc arg2
+  3027  d425 e6ff                       inc ptrh
+  3028  d427 c6fd                       dec arg3
+  3029  d429 d0df                       bne -
+  3030  d42b 60                         rts
+  3031                          finish
