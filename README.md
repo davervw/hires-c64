@@ -3,6 +3,8 @@
 I added some commands to Commodore 64 BASIC via software extensions
 written in 6502 Assembly.
 
+![usage](docs/usage.png)
+
 Notable features
 
 * Multiple hi-res screen support (up to 5) and swap between them
