@@ -154,11 +154,13 @@ option_colors_4 !byte 0
 option_colors_5 !byte 0
 option_colors_6 !byte 0
 option_colors_7 !byte 0
+option_hiresfg !byte 14
+option_hiresbg !byte 6
 
 case0 ; init
         sta option_apply_color
-        lda hiresfg
-        lda hiresbg
+        lda option_hiresfg
+        lda option_hiresbg
 
         lda #<basic_error
         sta $300
@@ -1554,14 +1556,14 @@ plot	jsr lookahead
         bcc +
         cpx #16
         bcs .illegal_quantity
-        stx hiresfg
+        stx option_hiresfg
         lda #$40
         sta option_apply_color
 +       jsr commaorbyte
         bcc +
         cpx #16
         bcs .illegal_quantity
-        stx hiresbg
+        stx option_hiresbg
         lda #$40
         sta option_apply_color
 +       jmp reloop
@@ -1951,15 +1953,15 @@ color
 ++      stx arg2        ; graphics mode (0 or 1)
         lda #0
         sta arg1        ; whether to apply color to screen
-        lda hiresfg
+        lda option_hiresfg
         sta arg3        ; save in case we need to restore
-        lda hiresbg
+        lda option_hiresbg
         sta arg4        ; save in case we need to restore
         jsr commaorbyte
         bcc +
         cpx #16
         bcs -
-        stx hiresfg
+        stx option_hiresfg
         inc arg1        ; set flag to apply fg color to screen
 +       cmp #$40 ; @
         beq ++
@@ -1967,7 +1969,7 @@ color
         bcc +
         cpx #16
         bcs -
-        stx hiresbg
+        stx option_hiresbg
         pha
         lda arg1
         ora #$02        ; set flag to apply bg color to screen
@@ -2030,9 +2032,9 @@ color
         dex
         bne -
 +       lda arg3
-        sta hiresfg     ; restore global color, just change region
+        sta option_hiresfg     ; restore global color, just change region
         lda arg4
-        sta hiresbg     ; restore global color, just change region
+        sta option_hiresbg     ; restore global color, just change region
         jsr color_range
         jmp reloop
 .chkstor
@@ -2048,26 +2050,26 @@ color
         lda arg1
         lsr
         bcc +
-        ldx hiresfg
+        ldx option_hiresfg
         stx $286        ; text foreground
 +       ldx arg3
-        stx hiresfg     ; restore global hires color because this was for text
+        stx option_hiresfg     ; restore global hires color because this was for text
         lsr
         bcc +
-        ldx hiresbg
+        ldx option_hiresbg
         stx $d021       ; background
 +       ldx arg4
-        stx hiresbg     ; restore global hires color because this was for text
+        stx option_hiresbg     ; restore global hires color because this was for text
         jmp reloop
 
 gethirescolor ; returns in X, doesn't change A
         pha
-        lda hiresfg
+        lda option_hiresfg
         asl
         asl
         asl
         asl
-        ora hiresbg
+        ora option_hiresbg
         tax
         pla
         rts
@@ -2355,9 +2357,6 @@ plot_len !byte 0
 plot_xlo !byte 0
 plot_xhi !byte 0
 plot_y   !byte 0
-
-hiresfg !byte 14
-hiresbg !byte 6
 
 x1lo    !byte 0
 x1hi    !byte 0
