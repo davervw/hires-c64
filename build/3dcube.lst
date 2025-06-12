@@ -1,0 +1,265 @@
+
+; ******** Source: code/3dcube.asm
+     1                          ; 3dcube in acme assembler, requires davervw's hires-c64
+     2                          ; port by David Van Wagner 2025-06-11
+     3                          ; original C code was by John Livdahl: https://pastebin.com/dhaEdtSt
+     4                          
+     5                          ; hires ml API reference for porting
+     6                          
+     7                          ; case 0 () - init variables, set vectors, etc.
+     8                          ; case 1 () - graphics on
+     9                          ; case 2 () - set graphic memory address to predefined
+    10                          ; case 3 (x=fg/bg) - set color ram and initialize fg/bg cell colors
+    11                          ; case 4 () - graphics clear
+    12                          ; case 5 () - graphics off 
+    13                          ; case 6 (x, y, flags [c=x8, z=color) - plot point
+    14                          ; case 7 (x, y, c=x8) - locate
+    15                          ; case 8 (x, y, c=x8, z=color) - drawto
+    16                          ; case 9 - shape size
+    17                          ; case 10- shape get
+    18                          ; case 11- shape/pattern put
+    19                          ; case 12 (x=altlo, y=althi) - screen swap
+    20                          ; case 13 - draw character at pixel location
+    21                          ; case 14 - set fg/bg 8x8 cell color at pixel location
+    22                          ; case 15 - text to graphics
+    23                          
+    24                          ; c014 - current plotting hires address
+    25                          ; c015 - alternate hires address
+    26                          ; c016 - option apply color
+    27                          ; c017 [8] - corresponding color high byte address for possible 8 hires screens in 8K banks (some invalid will have zeros)
+    28                          ; c01f option hiresfg (used by option apply color)
+    29                          ; c020 option hiresbg (used by option apply color)
+    30                          
+    31                          !macro HIRES_INIT {
+    32                              lda #0
+    33                              jsr $c000
+    34                          }
+    35                          
+    36                          !macro HIRES_GRAPHICS {
+    37                              lda #1
+    38                              jsr $c000
+    39                          }
+    40                          
+    41                          !macro HIRES_PRIMARY {
+    42                              lda #2
+    43                              jsr $c000
+    44                          }
+    45                          
+    46                          !macro HIRES_COLOR_INIT {
+    47                              lda bg
+    48                              asl
+    49                              asl
+    50                              asl
+    51                              asl
+    52                              ora fg
+    53                              tax ; x = bg in high 4 bits, fg in lower 4 bits
+    54                              lda #3
+    55                              jsr $c000
+    56                          }
+    57                          
+    58                          !macro HIRES_CLEAR {
+    59                              lda #4
+    60                              jsr $c000
+    61                          }
+    62                          
+    63                          !macro HIRES_OFF {
+    64                              lda #5
+    65                              jsr $c000
+    66                          }
+    67                          
+    68                          !macro HIRES_PLOT .x, .y { ; 9th bit of x coordinate is in C
+    69                              ldx .x
+    70                              ldy .y
+    71                              lda #6 ; force .Z off, so not clear point
+    72                              jsr $c000
+    73                          }
+    74                          
+    75                          !macro HIRES_LOCATE .x, .y { ; 9th bit of x coordinate is in C
+    76                              ldx .x
+    77                              ldy .y
+    78                              lda #7 ; force .Z off, so not clear point
+    79                              jsr $c000
+    80                          }
+    81                          
+    82                          !macro HIRES_DRAWTO .x, .y { ; 9th bit of x coordinate is in C
+    83                              ldx .x
+    84                              ldy .y
+    85                              lda #8 ; force .Z off, so not clear point
+    86                              jsr $c000
+    87                          }
+    88                          
+    89                          !macro HIRES_ADDR .addr {
+    90                              lda #>.addr
+    91                              sta $c014
+    92                          }
+    93                          
+    94                          !macro COLOR_ADDR .addr {
+    95                              lda $c014
+    96                              lsr
+    97                              lsr
+    98                              lsr
+    99                              lsr
+   100                              lsr
+   101                              tax
+   102                              lda #>.addr
+   103                              sta $c017,x
+   104                          }
+   105                          
+   106                          !macro HIRES_COLOR .fg, .bg, .border {
+   107                              lda #.fg
+   108                              and #$f
+   109                              sta fg
+   110                              lda #.bg
+   111                              and #$f
+   112                              sta bg
+   113                              lda #.border
+   114                              sta $d020
+   115                          }
+   116                          
+   117                          !macro HIRES_CLEAR_PLOT .addr {
+   118                              +HIRES_ADDR .addr
+   119                              +HIRES_COLOR_INIT
+   120                              +HIRES_CLEAR
+   121                          }
+   122                          
+   123                          !macro ASSIGN_TO .mem, .value {
+   124                              lda #.value
+   125                              sta .mem
+   126                          }
+   127                          
+   128                          !macro SUBTRACT_TO .mem, .orig, .diff {
+   129                              lda .orig
+   130                              sec
+   131                              sbc .diff
+   132                              sta .mem
+   133                          }
+   134                          
+   135                          !macro ADD_TO .mem, .orig, .more {
+   136                              lda .orig
+   137                              clc
+   138                              adc .more
+   139                              sta .mem
+   140                          }
+   141                          
+   142                          !macro ADD_VALUE_TO .mem, .orig, .value {
+   143                              lda .orig
+   144                              clc
+   145                              adc #.value
+   146                              sta .mem
+   147                          }
+   148                          
+   149                          !macro TOGGLE_HIGH .mem {
+   150                              lda .mem
+   151                              eor #$80
+   152                              sta .mem
+   153                          }
+   154                          
+   155                          !macro locate .x, .y {
+   156                              +ADD_VALUE_TO y0, .y, 16
+   157                              +ADD_VALUE_TO x0, .x, 100 ; C will have overflow 9th bit
+   158                              +HIRES_LOCATE x0, y0
+   159                          }
+   160                          
+   161                          !macro draw_to .x, .y {
+   162                              +ADD_VALUE_TO y0, .y, 16
+   163                              +ADD_VALUE_TO x0, .x, 100 ; C will have overflow 9th bit
+   164                              +HIRES_DRAWTO x0, y0
+   165                          }
+   166                          
+   167                          !macro draw_one {
+   168                              +locate b, a
+   169                              +draw_to c, b
+   170                              +draw_to d, c
+   171                              +draw_to a, d
+   172                          
+   173                              +locate c, c
+   174                              +draw_to b, d
+   175                              +draw_to a, f
+   176                              +draw_to d, e
+   177                          
+   178                              +locate c, b
+   179                              +draw_to c, c
+   180                              +draw_to d, e
+   181                              +draw_to d, c
+   182                          
+   183                              +locate a, f
+   184                              +draw_to a, d
+   185                              +draw_to b, a
+   186                              +draw_to b, d
+   187                          }
+   188                          
+   189                          !macro activate_screen {
+   190                              +HIRES_GRAPHICS
+   191                              +HIRES_PRIMARY
+   192                          }
+   193                          
+   194                          !macro next_plot_screen {
+   195                              bit p
+   196                              bpl +
+   197                              +HIRES_CLEAR_PLOT $A000
+   198                              jmp ++
+   199                          +   +HIRES_CLEAR_PLOT $E000
+   200                          ++  ;done
+   201                          }
+   202                          
+   203                          !macro NEXT_INCREMENT .addr, .var, .max {
+   204                              inc .var
+   205                              lda .var
+   206                              cmp #.max
+   207                              bcs +
+   208                              jmp .addr
+   209                          +
+   210                          }
+   211                          
+   212                          !macro exit_on_stop {
+   213                              jsr $FFE1
+   214                              bne +
+   215                              +HIRES_OFF
+   216                              rts
+   217                          +
+   218                          }
+   219                          
+   220                          *=$1000
+   221                          
+   222                          ; zero page memory
+   223                          p = $a3
+   224                          r = $a4
+   225                          a = $a5
+   226                          b = $a6
+   227                          c = $a7
+   228                          d = $a8
+   229                          e = $a9
+   230                          f = $aa
+   231                          x0 = $b5
+   232                          y0 = $b6
+   233                          
+   234                          start:
+   235                          
+   236  1000 a9e08d14c0         +HIRES_ADDR $E000
+   237  1005 ad14c04a4a4a4a4a...+COLOR_ADDR $D800
+   238  1013 a9a08d14c0         +HIRES_ADDR $A000
+   239  1018 ad14c04a4a4a4a4a...+COLOR_ADDR $8C00
+   240  1026 a90b290f8d3c12a9...+HIRES_COLOR 11, 0, 11
+   241  1039 a98085a3           +ASSIGN_TO p, $80
+   242  103d a93c85a4           +ASSIGN_TO r, 60
+   243                          
+   244                          again:
+   245  1041 a90085a5               +ASSIGN_TO a, 0
+   246                          
+   247                          loop_a:
+   248  1045 20e1ffd006a90520...        +exit_on_stop
+   249  1050 24a3101da9a08d14...        +next_plot_screen
+   250  108b a5a438e5a585a6             +SUBTRACT_TO b, r, a
+   251  1092 a5a61865a485a7             +ADD_TO c, b, r
+   252  1099 a5a51865a485a8             +ADD_TO d, a, r
+   253  10a0 a5a71865a485a9             +ADD_TO e, c, r
+   254  10a7 a5a81865a485aa             +ADD_TO f, d, r
+   255  10ae a5a518691085b6a5...        +draw_one
+   256  121e a9012000c0a90220...        +activate_screen
+   257  1228 a5a3498085a3               +TOGGLE_HIGH p
+   258  122e e6a5a5a5c93cb003...    +NEXT_INCREMENT loop_a, a, 60
+   259                          
+   260  1239 4c4110             jmp again
+   261                          
+   262  123c 01                 fg: !byte 1 ; 1=white
+   263  123d 00                 bg: !byte 0 ; 0=black
