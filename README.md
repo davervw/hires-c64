@@ -7,7 +7,7 @@ Notable features
 
 * Multiple hi-res screen support (up to 5) and swap between them
 * Two hi-res screens and color tables using 18K RAM under ROM and I/O
-* Doesn't take away any BASIC RAM, only uses $C000-D423 extra RAM
+* Doesn't take away any BASIC RAM, only uses $C000-D42B extra RAM
 * Copy shapes of any size between screen and memory
 * HIRES, COLOR, PLOT, RECT, PATTERN, SHAPE commands [(syntax PDF here)](https://github.com/davervw/hires-c64/raw/master/docs/hi-res%20syntax.pdf)
 * Machine language interface included if BASIC isn't your thing
